@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anomaly Types Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .test-case { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .anomaly { background-color: #ffe6e6; border-color: #ff9999; }
+        .normal { background-color: #e6ffe6; border-color: #99ff99; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; margin: 5px; }
+        .result { margin-top: 10px; padding: 10px; border-radius: 5px; }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Network Anomaly Types Test</h1>
+    <p>Test different input combinations to see specific anomaly types:</p>
+    
+    <div class="test-case">
+        <h3>1. DDoS Attack Test</h3>
+        <p>High packet count + high byte count</p>
+        <button onclick="testAnomaly([100, 1500, 60000, 6, 80])">Test DDoS Attack</button>
+        <div id="result1"></div>
+    </div>
+    
+    <div class="test-case">
+        <h3>2. Port Scan Test</h3>
+        <p>High flow duration + low packet count</p>
+        <button onclick="testAnomaly([600, 5, 1000, 6, 22])">Test Port Scan</button>
+        <div id="result2"></div>
+    </div>
+    
+    <div class="test-case">
+        <h3>3. Brute Force Attack Test</h3>
+        <p>High packet count + low byte count</p>
+        <button onclick="testAnomaly([200, 800, 500, 6, 22])">Test Brute Force</button>
+        <div id="result3"></div>
+    </div>
+    
+    <div class="test-case">
+        <h3>4. Suspicious Protocol Test</h3>
+        <p>Unusual protocol (not TCP/UDP/ICMP)</p>
+        <button onclick="testAnomaly([100, 50, 2000, 47, 80])">Test Suspicious Protocol</button>
+        <div id="result4"></div>
+    </div>
+    
+    <div class="test-case">
+        <h3>5. Suspicious Port Access Test</h3>
+        <p>Access to well-known attack ports</p>
+        <button onclick="testAnomaly([100, 50, 2000, 6, 445])">Test Suspicious Port</button>
+        <div id="result5"></div>
+    </div>
+    
+    <div class="test-case">
+        <h3>6. High Traffic Anomaly Test</h3>
+        <p>Very high byte count</p>
+        <button onclick="testAnomaly([200, 100, 150000, 6, 80])">Test High Traffic</button>
+        <div id="result6"></div>
+    </div>
+    
+    <div class="test-case">
+        <h3>7. Long Duration Flow Test</h3>
+        <p>Suspiciously long flow duration</p>
+        <button onclick="testAnomaly([1500, 50, 2000, 6, 80])">Test Long Duration</button>
+        <div id="result7"></div>
+    </div>
+    
+    <div class="test-case">
+        <h3>8. Normal Traffic Test</h3>
+        <p>Normal web traffic</p>
+        <button onclick="testAnomaly([100, 50, 2000, 6, 80])">Test Normal Traffic</button>
+        <div id="result8"></div>
+    </div>
+
+    <script>
+        async function testAnomaly(features) {
+            const testNumber = event.target.onclick.toString().match(/testAnomaly\(\[.*?\]\)/)[0].split('testAnomaly(')[1].split(')')[0];
+            const resultId = 'result' + (document.querySelectorAll('button').length - Array.from(document.querySelectorAll('button')).indexOf(event.target));
+            
+            const resultDiv = document.getElementById(resultId);
+            resultDiv.innerHTML = '<p>Testing...</p>';
+            
+            try {
+                const response = await fetch('http://localhost:8000/predict', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ features: features })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    const isAnomaly = data.label === 'anomaly';
+                    resultDiv.innerHTML = `
+                        <div class="result ${isAnomaly ? 'error' : 'success'}">
+                            <strong>Result:</strong> ${data.label}<br>
+                            <strong>Anomaly Type:</strong> ${data.anomaly_type}<br>
+                            <strong>Confidence:</strong> ${(data.score * 100).toFixed(1)}%<br>
+                            <strong>Details:</strong> Flow: ${data.details.flow_duration}, Packets: ${data.details.packet_count}, Bytes: ${data.details.byte_count}, Protocol: ${data.details.protocol}, Port: ${data.details.port}
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `<div class="result error">Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result error">Connection Error: ${error.message}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>

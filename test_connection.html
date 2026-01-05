@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Connection Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .test-result { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>🔧 API Connection Test</h1>
+    <p>This page will test if your backend API is working correctly.</p>
+    
+    <button onclick="testAPI()">Test API Connection</button>
+    
+    <div id="results"></div>
+
+    <script>
+        async function testAPI() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<p>Testing API connection...</p>';
+            
+            try {
+                // Test health endpoint
+                const healthResponse = await fetch('http://localhost:8000/health');
+                const healthData = await healthResponse.json();
+                
+                if (healthResponse.ok) {
+                    resultsDiv.innerHTML += `
+                        <div class="test-result success">
+                            ✅ Health Check: ${healthData.message}
+                        </div>
+                    `;
+                } else {
+                    throw new Error(`Health check failed: ${healthData.detail || 'Unknown error'}`);
+                }
+                
+                // Test prediction endpoint
+                const predictResponse = await fetch('http://localhost:8000/predict', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        features: [100.5, 50.0, 1024.0, 1.0, 80.0]
+                    })
+                });
+                
+                const predictData = await predictResponse.json();
+                
+                if (predictResponse.ok) {
+                    resultsDiv.innerHTML += `
+                        <div class="test-result success">
+                            ✅ Prediction Test: ${predictData.label} (confidence: ${(predictData.score * 100).toFixed(1)}%)
+                        </div>
+                    `;
+                } else {
+                    throw new Error(`Prediction failed: ${predictData.detail || 'Unknown error'}`);
+                }
+                
+                resultsDiv.innerHTML += `
+                    <div class="test-result success">
+                        🎉 All tests passed! Your API is working correctly.
+                        <br>You can now use your frontend application.
+                    </div>
+                `;
+                
+            } catch (error) {
+                resultsDiv.innerHTML += `
+                    <div class="test-result error">
+                        ❌ API Test Failed: ${error.message}
+                        <br><br>
+                        <strong>Solutions:</strong>
+                        <br>1. Make sure the backend server is running
+                        <br>2. Run the FIX_FETCH_ERROR.bat file
+                        <br>3. Check that port 8000 is not blocked
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>

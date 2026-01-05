@@ -1,0 +1,14 @@
+
+> network-anomaly-detection-portfolio@1.0.0 dev
+> vite
+
+Port 3000 is in use, trying another one...
+
+  [32m[1mVITE[22m v4.5.14[39m  [2mready in [0m[1m438[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m3001[22m/[39m
+[2m  [32m➜[39m  [1mNetwork[22m[2m: use [22m[1m--host[22m[2m to expose[22m
+[2m[32m  ➜[39m[22m[2m  press [22m[1mh[22m[2m to show help[22m
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+[2m10:27:56 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/@fs/E:/Network-main/web/src/components/RealtimeDashboard.jsx, /@fs/E:/Network-main/web/src/index.css[22m
+[2m10:28:50 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/@fs/E:/Network-main/web/src/components/RealtimeDashboard.jsx, /@fs/E:/Network-main/web/src/index.css[22m
