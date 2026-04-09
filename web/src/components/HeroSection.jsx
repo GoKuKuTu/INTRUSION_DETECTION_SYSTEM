@@ -116,7 +116,7 @@ const HeroSection = () => {
               <div className="text-gray-600">Detection Accuracy</div>
             </div>
             <div className="text-center">
-              <div className="text-3xl font-bold text-primary-600 mb-2">5+</div>
+              <div className="text-3xl font-bold text-primary-600 mb-2">4+</div>
               <div className="text-gray-600">ML/DL Models</div>
             </div>
             <div className="text-center">

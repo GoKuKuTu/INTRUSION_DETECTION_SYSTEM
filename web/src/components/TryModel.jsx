@@ -38,10 +38,11 @@ const TryModel = () => {
         parseFloat(formData.feature5) || 0
       ];
 
-      // API endpoint (configurable). Set VITE_API_URL in web/.env when running locally
-      const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-      const params = new URLSearchParams({ model: 'ml', path: 'models/full_model.pkl' })
-      const response = await fetch(`${API_BASE}/predict?${params.toString()}`, {
+      // API endpoint (configurable). For the Try Model section,
+      // we call the simple rule-based test server on port 8000.
+      // Set VITE_API_URL in web/.env if you want to override.
+      const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${API_BASE}/predict`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

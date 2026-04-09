@@ -93,6 +93,8 @@ const Results = () => {
   return (
     <section id="results" className="py-20 bg-white">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+
+        {/* Header */}
         <motion.div
           variants={containerVariants}
           initial="hidden"
@@ -110,11 +112,11 @@ const Results = () => {
             variants={itemVariants}
             className="text-xl text-gray-600 max-w-3xl mx-auto"
           >
-            Comprehensive evaluation metrics and model comparison across different algorithms
+            Comprehensive evaluation metrics
           </motion.p>
         </motion.div>
 
-        {/* Key Metrics Cards */}
+        {/* Metrics */}
         <motion.div
           variants={containerVariants}
           initial="hidden"
@@ -138,23 +140,19 @@ const Results = () => {
           ))}
         </motion.div>
 
-        {/* Model Comparison Table */}
-        <motion.div
+        {/* Model Comparison */}
+        {/* <motion.div
           variants={containerVariants}
           initial="hidden"
           whileInView="visible"
           viewport={{ once: true }}
-          className="mb-16"
         >
           <motion.div variants={itemVariants} className="text-center mb-8">
             <h3 className="text-2xl font-bold text-gray-900 mb-4">Model Comparison</h3>
             <p className="text-gray-600">Performance metrics across different ML/DL approaches</p>
           </motion.div>
 
-          <motion.div
-            variants={itemVariants}
-            className="bg-white rounded-xl shadow-lg overflow-hidden"
-          >
+          <motion.div variants={itemVariants} className="bg-white rounded-xl shadow-lg overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-gray-50">
@@ -180,141 +178,8 @@ const Results = () => {
               </table>
             </div>
           </motion.div>
-        </motion.div>
+        </motion.div> */}
 
-        {/* Chart Placeholders */}
-        <motion.div
-          variants={containerVariants}
-          initial="hidden"
-          whileInView="visible"
-          viewport={{ once: true }}
-        >
-          <motion.div variants={itemVariants} className="text-center mb-8">
-            <h3 className="text-2xl font-bold text-gray-900 mb-4">Performance Visualizations</h3>
-            <p className="text-gray-600">Detailed charts and graphs from model evaluation</p>
-          </motion.div>
-
-          <motion.div
-            variants={containerVariants}
-            className="grid grid-cols-1 lg:grid-cols-2 gap-8"
-          >
-            {/* ROC Curve Placeholder */}
-            <motion.div
-              variants={itemVariants}
-              className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl p-8 shadow-lg"
-            >
-              <div className="text-center">
-                <PieChart className="w-16 h-16 text-blue-600 mx-auto mb-4" />
-                <h4 className="text-xl font-semibold text-gray-900 mb-2">ROC Curves</h4>
-                <p className="text-gray-600 mb-4">Receiver Operating Characteristic curves for all models</p>
-                <div className="bg-white rounded-lg p-4 border-2 border-dashed border-gray-300">
-                  <p className="text-gray-500 text-sm">
-                    📊 Chart placeholder - Replace with actual ROC curve from /reports/roc_curves.png
-                  </p>
-                </div>
-              </div>
-            </motion.div>
-
-            {/* Confusion Matrix Placeholder */}
-            <motion.div
-              variants={itemVariants}
-              className="bg-gradient-to-br from-green-50 to-blue-50 rounded-xl p-8 shadow-lg"
-            >
-              <div className="text-center">
-                <BarChart3 className="w-16 h-16 text-green-600 mx-auto mb-4" />
-                <h4 className="text-xl font-semibold text-gray-900 mb-2">Confusion Matrices</h4>
-                <p className="text-gray-600 mb-4">Classification results visualization for each model</p>
-                <div className="bg-white rounded-lg p-4 border-2 border-dashed border-gray-300">
-                  <p className="text-gray-500 text-sm">
-                    📊 Chart placeholder - Replace with actual confusion matrices from /reports/confusion_matrices.png
-                  </p>
-                </div>
-              </div>
-            </motion.div>
-
-            {/* Feature Importance Placeholder */}
-            <motion.div
-              variants={itemVariants}
-              className="bg-gradient-to-br from-orange-50 to-pink-50 rounded-xl p-8 shadow-lg"
-            >
-              <div className="text-center">
-                <TrendingUp className="w-16 h-16 text-orange-600 mx-auto mb-4" />
-                <h4 className="text-xl font-semibold text-gray-900 mb-2">Feature Importance</h4>
-                <p className="text-gray-600 mb-4">Most influential features for anomaly detection</p>
-                <div className="bg-white rounded-lg p-4 border-2 border-dashed border-gray-300">
-                  <p className="text-gray-500 text-sm">
-                    📊 Chart placeholder - Replace with actual feature importance from /reports/feature_importance.png
-                  </p>
-                </div>
-              </div>
-            </motion.div>
-
-            {/* Training History Placeholder */}
-            <motion.div
-              variants={itemVariants}
-              className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl p-8 shadow-lg"
-            >
-              <div className="text-center">
-                <Target className="w-16 h-16 text-purple-600 mx-auto mb-4" />
-                <h4 className="text-xl font-semibold text-gray-900 mb-2">Training History</h4>
-                <p className="text-gray-600 mb-4">Model performance over training epochs</p>
-                <div className="bg-white rounded-lg p-4 border-2 border-dashed border-gray-300">
-                  <p className="text-gray-500 text-sm">
-                    📊 Chart placeholder - Replace with actual training history from /reports/training_history.png
-                  </p>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        </motion.div>
-
-        {/* Key Insights */}
-        <motion.div
-          variants={containerVariants}
-          initial="hidden"
-          whileInView="visible"
-          viewport={{ once: true }}
-          className="mt-16"
-        >
-          <motion.div variants={itemVariants} className="text-center mb-8">
-            <h3 className="text-2xl font-bold text-gray-900 mb-4">Key Insights</h3>
-          </motion.div>
-
-          <motion.div
-            variants={containerVariants}
-            className="grid grid-cols-1 md:grid-cols-3 gap-6"
-          >
-            <motion.div
-              variants={itemVariants}
-              className="bg-blue-50 rounded-xl p-6 border-l-4 border-blue-500"
-            >
-              <h4 className="font-semibold text-gray-900 mb-2">XGBoost Excellence</h4>
-              <p className="text-gray-600 text-sm">
-                XGBoost achieved the highest accuracy (95.8%) with optimal training time, making it ideal for production deployment.
-              </p>
-            </motion.div>
-
-            <motion.div
-              variants={itemVariants}
-              className="bg-green-50 rounded-xl p-6 border-l-4 border-green-500"
-            >
-              <h4 className="font-semibold text-gray-900 mb-2">Real-time Performance</h4>
-              <p className="text-gray-600 text-sm">
-                All models achieve sub-millisecond prediction times, enabling real-time anomaly detection in production environments.
-              </p>
-            </motion.div>
-
-            <motion.div
-              variants={itemVariants}
-              className="bg-purple-50 rounded-xl p-6 border-l-4 border-purple-500"
-            >
-              <h4 className="font-semibold text-gray-900 mb-2">Balanced Performance</h4>
-              <p className="text-gray-600 text-sm">
-                High precision and recall rates indicate excellent balance between detecting anomalies and minimizing false positives.
-              </p>
-            </motion.div>
-          </motion.div>
-        </motion.div>
       </div>
     </section>
   );

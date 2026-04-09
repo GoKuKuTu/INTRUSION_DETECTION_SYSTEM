@@ -165,6 +165,7 @@ class TrafficCapture:
         self.running = False
         self.capture_thread = None
         self.flow_cleanup_thread = None
+        self.using_mock_data = False  # Track whether we're using mock data
         
         logger.info(f"Initialized TrafficCapture on interface: {self.interface}")
     
@@ -339,6 +340,10 @@ class TrafficCapture:
     def get_flow_count(self) -> int:
         """Get number of active flows."""
         return len(self.flows)
+    
+    def get_data_source_type(self) -> str:
+        """Get the type of data source being used."""
+        return "synthetic" if self.using_mock_data else "real"
 
     # --- Mock generator for environments without libpcap ---
     def _start_mock_generator(self):
@@ -346,6 +351,7 @@ class TrafficCapture:
         if getattr(self, 'mocking', False):
             return
         self.mocking = True
+        self.using_mock_data = True  # Set flag to indicate we're using mock data
         self.mock_thread = threading.Thread(target=self._mock_loop, daemon=True)
         self.mock_thread.start()
         logger.info("Mock traffic generator started")

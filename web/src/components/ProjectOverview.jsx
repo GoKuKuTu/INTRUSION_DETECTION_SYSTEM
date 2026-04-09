@@ -100,7 +100,7 @@ const ProjectOverview = () => {
             variants={itemVariants}
             className="text-xl text-gray-600 max-w-3xl mx-auto"
           >
-            A comprehensive machine learning solution for detecting network anomalies and cyber threats
+            A comprehensive machine/deep learning solution for detecting network anomalies and cyber threats
           </motion.p>
         </motion.div>
 
@@ -151,9 +151,6 @@ const ProjectOverview = () => {
         >
           <motion.div variants={itemVariants} className="text-center mb-12">
             <h3 className="text-2xl font-bold text-gray-900 mb-4">Datasets Used</h3>
-            <p className="text-lg text-gray-700 max-w-3xl mx-auto">
-              Our models are trained and evaluated on industry-standard network security datasets
-            </p>
           </motion.div>
 
           <motion.div
@@ -187,10 +184,7 @@ const ProjectOverview = () => {
           viewport={{ once: true }}
         >
           <motion.div variants={itemVariants} className="text-center mb-12">
-            <h3 className="text-2xl font-bold text-gray-900 mb-4">ML/DL Models</h3>
-            <p className="text-lg text-gray-700 max-w-3xl mx-auto">
-              Comprehensive comparison of traditional and modern approaches to anomaly detection
-            </p>
+            <h3 className="text-2xl font-bold text-gray-900 mb-4">ML/DL Models Used</h3>
           </motion.div>
 
           <motion.div

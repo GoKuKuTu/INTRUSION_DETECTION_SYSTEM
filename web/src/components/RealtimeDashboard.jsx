@@ -1,416 +1,380 @@
-import { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Activity, 
-  AlertTriangle, 
-  Shield, 
-  Wifi, 
-  Play, 
-  Square,
-  TrendingUp,
-  Clock,
-  MapPin
-} from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import io from 'socket.io-client';
 
-const RealtimeDashboard = () => {
-  const [isMonitoring, setIsMonitoring] = useState(false);
-  const [predictions, setPredictions] = useState([]);
-  const [stats, setStats] = useState({
-    totalFlows: 0,
-    normalFlows: 0,
-    attackFlows: 0,
-    activeFlows: 0
-  });
-  const [recentAttacks, setRecentAttacks] = useState([]);
-  const [socket, setSocket] = useState(null);
-  const [connectionStatus, setConnectionStatus] = useState('disconnected');
-  const predictionsRef = useRef([]);
-  const maxPredictions = 100; // Keep last 100 predictions
-
-  // IMPORTANT: Backend is running on port 5001 in this session
-  // Point client to the realtime server started on 5001
-  const API_BASE = 'http://localhost:5001';
-  
-  // Debug: Log the API base URL
-  console.log('🔧 API_BASE configured as:', API_BASE);
-  console.log('🔧 Connecting to backend on port 5000');
+const RealTimeDashboard = () => {
+  const [events, setEvents] = useState([]);
+  const [status, setStatus] = useState('disconnected');
+  const [isDetecting, setIsDetecting] = useState(false);
+  const [dataSource, setDataSource] = useState('unknown');
+  const [activeFlows, setActiveFlows] = useState(0);
+  const [lastStatusTime, setLastStatusTime] = useState(null);
+  const [statusMessage, setStatusMessage] = useState('');
+  const [monitorDuration, setMonitorDuration] = useState(0);
+  const [heartbeatCount, setHeartbeatCount] = useState(0);
+  const [lastEventType, setLastEventType] = useState('none');
+  const socketRef = useRef(null);
+  const monitorIntervalRef = useRef(null);
 
   useEffect(() => {
-    // Initialize Socket.IO connection
-    console.log('🔌 Initializing Socket.IO connection to:', API_BASE);
-    const newSocket = io(API_BASE, {
-      // Use polling transport by default to avoid websocket handshake
-      // errors when the Python backend isn't running an async server
-      // like eventlet/gevent which provides websocket support.
-      transports: ['polling'],
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionAttempts: 10,
-      timeout: 20000,
-      forceNew: false, // Don't force new connection on re-render
-      autoConnect: true
+    // Connect to Flask-SocketIO WebSocket for real-time IDS updates
+    const socket = io('http://localhost:5001');
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      setStatus('connected');
+      console.log('Connected to IDS server');
     });
 
-    // Connection event handlers
-    newSocket.on('connect', () => {
-      console.log('✅ Socket.IO Connected! ID:', newSocket.id);
-      setConnectionStatus('connected');
-      fetchStats(); // Fetch stats after connection
+    socket.on('prediction', (data) => {
+      console.log('Received prediction:', data);
+      if (data.data_source) {
+        setDataSource(data.data_source);
+      }
+      if (data.message) {
+        setStatusMessage(data.message);
+      }
+      if (data.data_source) {
+        setDataSource(data.data_source);
+      }
+      if (data.message) {
+        setStatusMessage(data.message);
+      }
+      setLastEventType('prediction');
+      setEvents((prev) => {
+        const next = [data, ...prev];
+        return next.slice(0, 50);
+      });
     });
 
-    newSocket.on('disconnect', (reason) => {
-      console.log('❌ Socket.IO Disconnected. Reason:', reason);
-      setConnectionStatus('disconnected');
+    socket.on('status', (data) => {
+      console.log('Status update:', data);
+      if (data.data_source) {
+        setDataSource(data.data_source);
+      }
+      if (typeof data.active_flows === 'number') {
+        setActiveFlows(data.active_flows);
+      }
+      const timestamp = data.timestamp || Date.now() / 1000;
+      setLastStatusTime(timestamp);
+      if (data.message) {
+        setStatusMessage(data.message);
+      }
+      if (typeof data.ids_running === 'boolean') {
+        setIsDetecting(data.ids_running);
+      } else if (data.message && data.message.includes('Monitoring started')) {
+        setIsDetecting(true);
+      } else if (data.message && data.message.includes('Monitoring stopped')) {
+        setIsDetecting(false);
+      } else if (data.message && data.message.includes('already running')) {
+        setIsDetecting(true);
+      }
+      setLastEventType('status');
     });
 
-    newSocket.on('connect_error', (error) => {
-      console.error('❌ Socket.IO Connection Error:', error);
-      console.error('Error details:', error.message, error.type);
-      setConnectionStatus('disconnected');
+    socket.on('heartbeat', (data) => {
+      console.log('Heartbeat update:', data);
+      if (data.data_source) {
+        setDataSource(data.data_source);
+      }
+      if (typeof data.active_flows === 'number') {
+        setActiveFlows(data.active_flows);
+      }
+      if (data.timestamp) {
+        setLastStatusTime(data.timestamp);
+      }
+      if (data.message) {
+        setStatusMessage(data.message);
+      }
+      if (typeof data.ids_running === 'boolean') {
+        setIsDetecting(data.ids_running);
+      }
+      setLastEventType('heartbeat');
+      const heartbeatEvent = {
+        label: 'normal',
+        anomaly_type: data.message || 'Live heartbeat',
+        score: 0.0,
+        model_type: 'system',
+        complexity: 0.0,
+        timestamp: data.timestamp || Date.now() / 1000,
+        src_ip: data.data_source === 'real' ? 'real-traffic' : 'synthetic-test',
+        dst_ip: 'monitor',
+        src_port: 0,
+        dst_port: 0,
+        protocol: 'SYSTEM',
+        flow_duration: 0.0,
+        total_packets: 0,
+        total_bytes: 0,
+        data_source: data.data_source || dataSource,
+        heartbeat: true
+      };
+      setHeartbeatCount((count) => count + 1);
+      setEvents((prev) => {
+        const next = [heartbeatEvent, ...prev];
+        return next.slice(0, 50);
+      });
     });
 
-    newSocket.on('connected', (data) => {
-      console.log('📨 Server connected message:', data);
-      setConnectionStatus('connected');
+    socket.on('disconnect', () => {
+      setStatus('disconnected');
+      setIsDetecting(false);
     });
 
-    newSocket.on('prediction', (data) => {
-      handlePrediction(data);
+    socket.on('connect_error', (err) => {
+      console.error('WebSocket connect_error:', err);
+      setStatus('error');
+      setIsDetecting(false);
     });
 
-    newSocket.on('status', (data) => {
-      console.log('Status:', data);
-    });
-
-    // Set socket
-    setSocket(newSocket);
-
-    // Cleanup on unmount only
     return () => {
-      console.log('🧹 Component unmounting - cleaning up Socket.IO');
-      if (newSocket && newSocket.connected) {
-        newSocket.disconnect();
+      if (monitorIntervalRef.current) {
+        clearInterval(monitorIntervalRef.current);
       }
-      newSocket.removeAllListeners();
-      newSocket.close();
+      socket.disconnect();
     };
-  }, []); // Empty deps - only run once on mount
+  }, []);
 
-  useEffect(() => {
-    // Update stats periodically
-    const interval = setInterval(() => {
-      if (isMonitoring) {
-        fetchStats();
-      }
-    }, 5000); // Every 5 seconds
-
-    return () => clearInterval(interval);
-  }, [isMonitoring]);
-
-  const fetchStats = async () => {
+  const handleStart = async () => {
     try {
-      const response = await fetch(`${API_BASE}/stats`);
-      if (response.ok) {
-        const data = await response.json();
-        setStats(prev => ({
-          ...prev,
-          activeFlows: data.active_flows || 0
-        }));
-      }
-    } catch (error) {
-      console.error('Error fetching stats:', error);
-    }
-  };
-
-  const handlePrediction = (prediction) => {
-    const timestamp = new Date().toLocaleTimeString();
-    const predictionWithTime = {
-      ...prediction,
-      id: Date.now() + Math.random(),
-      timestamp
-    };
-
-    predictionsRef.current = [predictionWithTime, ...predictionsRef.current].slice(0, maxPredictions);
-    setPredictions(predictionsRef.current);
-
-    // Update stats
-    setStats(prev => {
-      const newStats = { ...prev };
-      newStats.totalFlows += 1;
-      if (prediction.label === 'anomaly') {
-        newStats.attackFlows += 1;
-        setRecentAttacks(prev => [predictionWithTime, ...prev].slice(0, 10));
+      if (socketRef.current) {
+        console.log('Emitting start_monitoring');
+        socketRef.current.emit('start_monitoring');
+        setIsDetecting(true);
+        setMonitorDuration(0);
+        if (monitorIntervalRef.current) {
+          clearInterval(monitorIntervalRef.current);
+        }
+        monitorIntervalRef.current = setInterval(() => {
+          setMonitorDuration((value) => value + 1);
+        }, 1000);
       } else {
-        newStats.normalFlows += 1;
+        console.error('Socket not initialized');
       }
-      return newStats;
-    });
-  };
-
-  const startMonitoring = () => {
-    if (socket) {
-      socket.emit('start_monitoring');
-      setIsMonitoring(true);
+    } catch (err) {
+      console.error('Failed to start realtime IDS', err);
     }
   };
 
-  const stopMonitoring = () => {
-    if (socket) {
-      socket.emit('stop_monitoring');
-      setIsMonitoring(false);
+  const handleStop = async () => {
+    try {
+      if (socketRef.current) {
+        console.log('Emitting stop_monitoring');
+        socketRef.current.emit('stop_monitoring');
+        setIsDetecting(false);
+        if (monitorIntervalRef.current) {
+          clearInterval(monitorIntervalRef.current);
+          monitorIntervalRef.current = null;
+        }
+      } else {
+        console.error('Socket not initialized');
+      }
+    } catch (err) {
+      console.error('Failed to stop realtime IDS', err);
     }
-  };
-
-  const getStatusColor = () => {
-    if (connectionStatus === 'connected') {
-      return isMonitoring ? 'text-green-500' : 'text-yellow-500';
-    }
-    return 'text-red-500';
-  };
-
-  const getStatusText = () => {
-    if (connectionStatus === 'disconnected') return 'Disconnected';
-    if (connectionStatus === 'connected') return isMonitoring ? 'Monitoring Active' : 'Connected - Ready';
-    return 'Connecting...';
   };
 
   return (
-    <section id="realtime" className="py-20 bg-gradient-to-br from-gray-50 to-blue-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-center mb-12"
-        >
-          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
-            Real-Time Intrusion Detection
-          </h2>
-          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-            Live network traffic monitoring and anomaly detection
-          </p>
-        </motion.div>
-
-        {/* Control Panel */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="bg-white rounded-xl shadow-lg p-6 mb-8"
-        >
-          <div className="flex items-center justify-between flex-wrap gap-4">
-            <div className="flex items-center space-x-4">
-              <div className={`flex items-center space-x-2 ${getStatusColor()}`}>
-                <Activity className="w-5 h-5" />
-                <span className="font-medium">{getStatusText()}</span>
-              </div>
-              <div className="text-sm text-gray-600">
-                Active Flows: <span className="font-semibold">{stats.activeFlows}</span>
-              </div>
-            </div>
-            <div className="flex space-x-3">
-              {!isMonitoring ? (
-                <button
-                  onClick={startMonitoring}
-                  disabled={connectionStatus !== 'connected'}
-                  className="flex items-center space-x-2 bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Play className="w-4 h-4" />
-                  <span>Start Monitoring</span>
-                </button>
-              ) : (
-                <button
-                  onClick={stopMonitoring}
-                  className="flex items-center space-x-2 bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 transition-colors"
-                >
-                  <Square className="w-4 h-4" />
-                  <span>Stop Monitoring</span>
-                </button>
-              )}
-            </div>
+    <section className="py-20 bg-gradient-to-br from-indigo-50 to-blue-50">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="text-3xl md:text-4xl font-bold text-gray-900">
+              Real-Time IDS Dashboard
+            </h2>
+            <p className="mt-2 text-gray-600">
+              Live stream of network flows and anomaly predictions from the backend (real or synthetic data).
+            </p>
           </div>
-        </motion.div>
-
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.2 }}
-            className="bg-white rounded-xl shadow-lg p-6"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 mb-1">Total Flows</p>
-                <p className="text-3xl font-bold text-gray-900">{stats.totalFlows}</p>
-              </div>
-              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-blue-600" />
-              </div>
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.3 }}
-            className="bg-white rounded-xl shadow-lg p-6"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 mb-1">Normal Flows</p>
-                <p className="text-3xl font-bold text-green-600">{stats.normalFlows}</p>
-              </div>
-              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                <Shield className="w-6 h-6 text-green-600" />
-              </div>
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.4 }}
-            className="bg-white rounded-xl shadow-lg p-6"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 mb-1">Attack Flows</p>
-                <p className="text-3xl font-bold text-red-600">{stats.attackFlows}</p>
-              </div>
-              <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
-                <AlertTriangle className="w-6 h-6 text-red-600" />
-              </div>
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.5 }}
-            className="bg-white rounded-xl shadow-lg p-6"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 mb-1">Active Flows</p>
-                <p className="text-3xl font-bold text-blue-600">{stats.activeFlows}</p>
-              </div>
-              <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                <Wifi className="w-6 h-6 text-purple-600" />
-              </div>
-            </div>
-          </motion.div>
+          <div className="flex items-center space-x-3">
+            <span
+              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                status === 'connected'
+                  ? 'bg-green-100 text-green-800'
+                  : status === 'error'
+                  ? 'bg-red-100 text-red-800'
+                  : 'bg-gray-100 text-gray-800'
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full mr-2 ${
+                  status === 'connected'
+                    ? 'bg-green-500'
+                    : status === 'error'
+                    ? 'bg-red-500'
+                    : 'bg-gray-400'
+                }`}
+              />
+              {status === 'connected' ? 'WebSocket Connected' : status === 'error' ? 'Error' : 'Disconnected'}
+            </span>
+            <span
+              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                dataSource === 'real'
+                  ? 'bg-green-100 text-green-800'
+                  : dataSource === 'synthetic'
+                  ? 'bg-yellow-100 text-yellow-800'
+                  : 'bg-gray-100 text-gray-600'
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full mr-2 ${
+                  dataSource === 'real'
+                    ? 'bg-green-500'
+                    : dataSource === 'synthetic'
+                    ? 'bg-yellow-500'
+                    : 'bg-gray-400'
+                }`}
+              />
+              {dataSource === 'real' ? 'Real Data' : dataSource === 'synthetic' ? 'Synthetic Data' : 'Unknown Source'}
+            </span>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Recent Attacks */}
-          <motion.div
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.6 }}
-            className="bg-white rounded-xl shadow-lg p-6"
-          >
-            <h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center space-x-2">
-              <AlertTriangle className="w-5 h-5 text-red-600" />
-              <span>Recent Attacks</span>
-            </h3>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              <AnimatePresence>
-                {recentAttacks.length === 0 ? (
-                  <p className="text-gray-500 text-center py-8">No attacks detected yet</p>
-                ) : (
-                  recentAttacks.map((attack) => (
-                    <motion.div
-                      key={attack.id}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 20 }}
-                      className="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg"
-                    >
-                      <div className="flex items-start justify-between mb-2">
-                        <div>
-                          <p className="font-semibold text-red-900">{attack.anomaly_type || 'Unknown Attack'}</p>
-                          <p className="text-sm text-red-700">
-                            {attack.src_ip} → {attack.dst_ip}
-                          </p>
-                        </div>
-                        <span className="text-xs text-gray-500">{attack.timestamp}</span>
-                      </div>
-                      <div className="flex items-center space-x-4 text-sm text-gray-600">
-                        <span>Port: {attack.dst_port}</span>
-                        <span>Confidence: {(attack.score * 100).toFixed(1)}%</span>
-                      </div>
-                    </motion.div>
-                  ))
-                )}
-              </AnimatePresence>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
+          <div className="bg-white rounded-xl shadow p-4">
+            <div className="text-xs uppercase tracking-wide text-gray-500">Last update</div>
+            <div className="mt-2 text-lg font-semibold text-gray-900">
+              {lastStatusTime ? new Date(lastStatusTime * 1000).toLocaleTimeString() : 'No status received yet'}
             </div>
-          </motion.div>
+            <div className="mt-1 text-xs text-gray-600">{statusMessage || 'No status yet'}</div>
+          </div>
+          <div className="bg-white rounded-xl shadow p-4">
+            <div className="text-xs uppercase tracking-wide text-gray-500">Active flow count</div>
+            <div className="mt-2 text-lg font-semibold text-gray-900">{activeFlows}</div>
+            <div className="mt-1 text-xs text-gray-600">Flows currently captured by the IDS</div>
+          </div>
+          <div className="bg-white rounded-xl shadow p-4">
+            <div className="text-xs uppercase tracking-wide text-gray-500">Data source</div>
+            <div className="mt-2 text-lg font-semibold text-gray-900">{dataSource === 'real' ? 'Real Data' : dataSource === 'synthetic' ? 'Synthetic Data' : 'Unknown'}</div>
+            <div className="mt-1 text-xs text-gray-600">Source of the traffic being analyzed</div>
+          </div>
+          <div className="bg-white rounded-xl shadow p-4">
+            <div className="text-xs uppercase tracking-wide text-gray-500">Heartbeat count</div>
+            <div className="mt-2 text-lg font-semibold text-gray-900">{heartbeatCount}</div>
+            <div className="mt-1 text-xs text-gray-600">Backend heartbeat events received</div>
+            <div className="mt-4 text-xs uppercase tracking-wide text-gray-500">Last backend event</div>
+            <div className="mt-2 text-base font-semibold text-gray-900">{lastEventType}</div>
+          </div>
+        </div>
+        <div className="flex items-center space-x-3 mb-6">
+          <button
+            type="button"
+            onClick={handleStart}
+            disabled={isDetecting || status !== 'connected'}
+            className={`inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium focus:ring-2 focus:ring-offset-2 transition-colors ${
+              isDetecting || status !== 'connected'
+                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                : 'bg-green-600 text-white hover:bg-green-700 focus:ring-green-500'
+            }`}
+          >
+            Start Detection
+          </button>
+          <button
+            type="button"
+            onClick={handleStop}
+            disabled={!isDetecting}
+            className={`inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium focus:ring-2 focus:ring-offset-2 transition-colors ${
+              !isDetecting
+                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                : 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500'
+            }`}
+          >
+            Stop Detection
+          </button>
+        </div>
 
-          {/* Live Predictions Stream */}
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.7 }}
-            className="bg-white rounded-xl shadow-lg p-6"
-          >
-            <h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center space-x-2">
-              <Activity className="w-5 h-5 text-blue-600" />
-              <span>Live Predictions</span>
-            </h3>
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              <AnimatePresence>
-                {predictions.length === 0 ? (
-                  <p className="text-gray-500 text-center py-8">Waiting for predictions...</p>
-                ) : (
-                  predictions.slice(0, 20).map((prediction) => (
-                    <motion.div
-                      key={prediction.id}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      className={`p-3 rounded-lg border-l-4 ${
-                        prediction.label === 'anomaly'
-                          ? 'bg-red-50 border-red-500'
-                          : 'bg-green-50 border-green-500'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className={`font-semibold ${
-                          prediction.label === 'anomaly' ? 'text-red-900' : 'text-green-900'
-                        }`}>
-                          {prediction.label === 'anomaly' ? '⚠️ Attack' : '✓ Normal'}
+        <div className="bg-white rounded-xl shadow-lg p-6 max-h-[480px] overflow-y-auto">
+          {events.length === 0 ? (
+            <p className="text-gray-500 text-sm">
+              No events yet. Click &quot;Start Detection&quot; and keep this page open to view real-time updates.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {events.map((e, idx) => {
+                const label = e?.label ?? 'unknown';
+                const score = e?.score;
+                const attackType = e?.anomaly_type;
+                const modelType = e?.model_type;
+                const complexity = e?.complexity;
+                const isAnomaly = label === 'anomaly';
+
+                return (
+                  <div
+                    key={idx}
+                    className={`border rounded-lg p-4 flex items-start justify-between ${
+                      isAnomaly ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span
+                          className={`px-2 py-1 text-xs font-semibold rounded-full uppercase ${
+                            isAnomaly
+                              ? 'bg-red-100 text-red-800'
+                              : 'bg-green-100 text-green-800'
+                          }`}
+                        >
+                          {label}
                         </span>
-                        <span className="text-xs text-gray-500">{prediction.timestamp}</span>
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        <div className="flex items-center space-x-4">
-                          <span className="flex items-center space-x-1">
-                            <MapPin className="w-3 h-3" />
-                            <span>{prediction.src_ip}:{prediction.src_port}</span>
+                        {typeof score === 'number' && (
+                          <span className="text-xs text-gray-700">
+                            confidence: {(score * 100).toFixed(1)}%
                           </span>
-                          <span>→</span>
-                          <span>{prediction.dst_ip}:{prediction.dst_port}</span>
-                        </div>
-                        {prediction.anomaly_type && (
-                          <p className="text-red-700 mt-1">Type: {prediction.anomaly_type}</p>
                         )}
-                        <p className="text-gray-500 mt-1">
-                          Confidence: {(prediction.score * 100).toFixed(1)}%
-                        </p>
+                        {modelType && (
+                          <span className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                            {modelType.toUpperCase()}
+                          </span>
+                        )}
                       </div>
-                    </motion.div>
-                  ))
-                )}
-              </AnimatePresence>
+                      {attackType && (
+                        <div className="mt-2 text-xs text-gray-700">
+                          <span className="font-medium">type:</span>{' '}
+                          {attackType}
+                        </div>
+                      )}
+                      {(e.src_ip || e.dst_ip) && (
+                        <div className="mt-1 text-xs text-gray-600">
+                          {e.src_ip || 'unknown'} → {e.dst_ip || 'unknown'}
+                          {e.src_port !== undefined && e.dst_port !== undefined && (
+                            <span> ({e.src_port}:{e.dst_port})</span>
+                          )}
+                        </div>
+                      )}
+                      {(e.total_packets || e.total_bytes) && (
+                        <div className="mt-1 text-xs text-gray-600">
+                          {e.total_packets !== undefined && <span>{e.total_packets} pkt</span>}
+                          {e.total_bytes !== undefined && <span>{e.total_packets !== undefined ? ' · ' : ''}{e.total_bytes} bytes</span>}
+                        </div>
+                      )}
+                      {complexity !== undefined && (
+                        <div className="mt-1 text-xs text-gray-600">
+                          <span className="font-medium">complexity:</span>{' '}
+                          {complexity.toFixed(2)}
+                        </div>
+                      )}
+                      {e.data_source && (
+                        <div className="mt-1 text-xs text-purple-600 bg-purple-50 px-2 py-1 rounded inline-block">
+                          {e.data_source.toUpperCase()} DATA
+                        </div>
+                      )}
+                      {e.timestamp && (
+                        <div className="mt-1 text-xs text-gray-500">
+                          {new Date(e.timestamp * 1000).toLocaleTimeString()}
+                        </div>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-gray-500 mt-1">
+                      #{events.length - idx}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
-          </motion.div>
+          )}
         </div>
       </div>
     </section>
   );
 };
 
-export default RealtimeDashboard;
+export default RealTimeDashboard;
 

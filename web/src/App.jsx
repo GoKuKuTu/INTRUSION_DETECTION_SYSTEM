@@ -6,7 +6,7 @@ import ProjectOverview from './components/ProjectOverview';
 import TechStack from './components/TechStack';
 import Results from './components/Results';
 import TryModel from './components/TryModel';
-import RealtimeDashboard from './components/RealtimeDashboard';
+import RealTimeDashboard from './components/RealTimeDashboard';
 import Contact from './components/Contact';
 
 function App() {
@@ -77,19 +77,19 @@ function App() {
         <ProjectOverview />
         
         {/* Technology Stack */}
-        <TechStack />
+        {/* <TechStack /> */}
         
         {/* Results */}
         <Results />
-        
+
         {/* Try the Model */}
         <TryModel />
-        
-        {/* Real-Time Dashboard */}
-        <RealtimeDashboard />
-        
+
+        {/* Real-Time IDS Dashboard */}
+        <RealTimeDashboard />
+
         {/* Contact */}
-        <Contact />
+        {/* <Contact /> */}
       </main>
       
       {/* Back to Top Button */}

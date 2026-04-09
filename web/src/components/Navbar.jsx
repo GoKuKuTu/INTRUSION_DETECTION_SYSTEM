@@ -16,8 +16,8 @@ const Navbar = () => {
   const navItems = [
     { name: 'Home', href: '#home' },
     { name: 'Methodology', href: '#methodology' },
-    { name: 'Results', href: '#results' },
-    { name: 'Contact', href: '#contact' }
+    { name: 'Results', href: '#results' }
+    // { name: 'Contact', href: '#contact' }
   ];
 
   const scrollToSection = (href) => {

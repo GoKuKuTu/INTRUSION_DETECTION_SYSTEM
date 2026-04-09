@@ -33,11 +33,11 @@ except ImportError:
 try:
     from traffic_capture import TrafficCapture
     from feature_extractor import FeatureExtractor
-    from realtime_predictor import RealtimePredictor
+    from adaptive_predictor import AdaptiveRealtimePredictor
 except ImportError:
     from .traffic_capture import TrafficCapture
     from .feature_extractor import FeatureExtractor
-    from .realtime_predictor import RealtimePredictor
+    from .adaptive_predictor import AdaptiveRealtimePredictor
 
 logger = logging.getLogger(__name__)
 
@@ -113,23 +113,24 @@ class RealtimeIDS:
     Real-time Intrusion Detection System coordinator.
     """
     
-    def __init__(self, model_path: str, model_type: str = 'ml', interface: Optional[str] = None):
+    def __init__(self, ml_model_path: str, dl_model_path: str, complexity_threshold: float = 50.0, interface: Optional[str] = None):
         """
-        Initialize real-time IDS.
+        Initialize real-time IDS with adaptive predictor.
         
         Args:
-            model_path: Path to ML model
-            model_type: Type of model ('ml' or 'dl')
+            ml_model_path: Path to ML model
+            dl_model_path: Path to DL model
+            complexity_threshold: Threshold for model selection (> threshold uses DL)
             interface: Network interface for capture
         """
-        self.predictor = RealtimePredictor(model_path, model_type)
+        self.predictor = AdaptiveRealtimePredictor(ml_model_path, dl_model_path, complexity_threshold)
         self.feature_extractor = FeatureExtractor()
         self.traffic_capture = TrafficCapture(interface=interface)
         self.attack_logger = AttackLogger()
         self.running = False
         self.processing_thread = None
         
-        logger.info("RealtimeIDS initialized")
+        logger.info("RealtimeIDS initialized with adaptive predictor")
     
     def start(self):
         """Start real-time IDS."""
@@ -139,8 +140,11 @@ class RealtimeIDS:
         
         self.running = True
         self.traffic_capture.start()
-        self.processing_thread = threading.Thread(target=self._processing_loop, daemon=True)
-        self.processing_thread.start()
+        if socketio:
+            self.processing_thread = socketio.start_background_task(self._processing_loop)
+        else:
+            self.processing_thread = threading.Thread(target=self._processing_loop, daemon=True)
+            self.processing_thread.start()
         
         logger.info("Real-time IDS started")
     
@@ -148,14 +152,37 @@ class RealtimeIDS:
         """Stop real-time IDS."""
         self.running = False
         self.traffic_capture.stop()
-        if self.processing_thread:
-            self.processing_thread.join(timeout=2)
+        if self.processing_thread and hasattr(self.processing_thread, 'join'):
+            try:
+                self.processing_thread.join(timeout=2)
+            except Exception:
+                pass
         logger.info("Real-time IDS stopped")
     
     def _processing_loop(self):
         """Main processing loop for real-time predictions."""
+        last_status_time = 0
+        
         while self.running:
             try:
+                current_time = time.time()
+                
+                # Emit status update every second
+                if current_time - last_status_time >= 1.0:
+                    heartbeat_data = {
+                        'message': 'Monitoring heartbeat',
+                        'ids_running': self.running,
+                        'active_flows': self.traffic_capture.get_flow_count(),
+                        'data_source': self.traffic_capture.get_data_source_type(),
+                        'timestamp': current_time,
+                        'heartbeat': True
+                    }
+                    if socketio:
+                        socketio.emit('status', heartbeat_data, broadcast=True)
+                        socketio.emit('heartbeat', heartbeat_data, broadcast=True)
+                        logger.info('Emitted periodic heartbeat update')
+                    last_status_time = current_time
+                
                 # Get expired flows (completed flows)
                 flow = self.traffic_capture.get_expired_flow(timeout=1.0)
                 
@@ -180,18 +207,27 @@ class RealtimeIDS:
                         'protocol': flow.protocol,
                         'flow_duration': flow.get_duration(),
                         'total_packets': flow.fwd_packets + flow.bwd_packets,
-                        'total_bytes': flow.fwd_bytes + flow.bwd_bytes
+                        'total_bytes': flow.fwd_bytes + flow.bwd_bytes,
+                        'complexity': prediction.get('complexity', 0.0),
+                        'data_source': self.traffic_capture.get_data_source_type()
                     }
                     
                     if socketio:
-                        socketio.emit('prediction', prediction_data)
+                        socketio.emit('prediction', prediction_data, broadcast=True)
+                        logger.info('Broadcasted prediction event to connected clients')
                 
                 # Small sleep to prevent CPU spinning
-                time.sleep(0.1)
+                if socketio:
+                    socketio.sleep(0.1)
+                else:
+                    time.sleep(0.1)
                 
             except Exception as e:
                 logger.error(f"Error in processing loop: {e}")
-                time.sleep(1)
+                if socketio:
+                    socketio.sleep(1)
+                else:
+                    time.sleep(1)
     
     def predict_single(self, flow_features: Dict[str, float]) -> Dict:
         """
@@ -234,10 +270,14 @@ def root():
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint."""
+    predictor_stats = realtime_ids.predictor.get_stats() if realtime_ids else {}
+    
     return jsonify({
         'status': 'healthy',
         'ids_running': realtime_ids.running if realtime_ids else False,
-        'model_loaded': realtime_ids.predictor.model_loaded if realtime_ids else False
+        'ml_model_loaded': predictor_stats.get('ml_model_loaded', False),
+        'dl_model_loaded': predictor_stats.get('dl_model_loaded', False),
+        'complexity_threshold': predictor_stats.get('complexity_threshold', 50.0)
     })
 
 
@@ -278,12 +318,11 @@ def stats():
     if not realtime_ids:
         return jsonify({'error': 'IDS not initialized'}), 500
     
-    stats_data = {
+    stats_data = realtime_ids.predictor.get_stats()
+    stats_data.update({
         'active_flows': realtime_ids.traffic_capture.get_flow_count(),
-        'ids_running': realtime_ids.running,
-        'model_type': realtime_ids.predictor.model_type,
-        'model_path': str(realtime_ids.predictor.model_path)
-    }
+        'ids_running': realtime_ids.running
+    })
     
     return jsonify(stats_data)
 
@@ -307,41 +346,40 @@ def get_attacks():
                     continue
         
         return jsonify({'attacks': attacks[-50:]})  # Return last 50
-        
+
     except Exception as e:
         logger.error(f"Error reading attacks: {e}")
         return jsonify({'error': str(e)}), 500
 
 
-    @app.route('/emit_test', methods=['GET', 'POST'])
-    def emit_test():
-        """Emit a synthetic prediction event to connected Socket.IO clients.
+@app.route('/emit_test', methods=['GET', 'POST'])
+def emit_test():
+    """Emit a synthetic prediction event to connected Socket.IO clients.
 
-        Use this endpoint to quickly verify frontend reception of `prediction` events.
-        """
-        sample = {
-            'label': 'anomaly',
-            'anomaly_type': 'Synthetic Test',
-            'score': 0.95,
-            'model': 'test_model',
-            'model_type': 'ml',
-            'src_ip': '192.0.2.1',
-            'dst_ip': '198.51.100.2',
-            'src_port': 12345,
-            'dst_port': 80,
-            'protocol': 'TCP',
-            'flow_duration': 12.34,
-            'total_packets': 8,
-            'total_bytes': 1024
-        }
+    Use this endpoint to quickly verify frontend reception of `prediction` events.
+    """
+    sample = {
+        'label': 'anomaly',
+        'anomaly_type': 'Synthetic Test',
+        'score': 0.95,
+        'model': 'test_model',
+        'model_type': 'ml',
+        'src_ip': '192.0.2.1',
+        'dst_ip': '198.51.100.2',
+        'src_port': 12345,
+        'dst_port': 80,
+        'protocol': 'TCP',
+        'flow_duration': 12.34,
+        'total_packets': 8,
+        'total_bytes': 1024
+    }
 
-        if socketio:
-            socketio.emit('prediction', sample)
-            logger.info('Emitted synthetic prediction for testing')
-            return jsonify({'status': 'emitted', 'sample': sample})
-        else:
-            return jsonify({'error': 'Socket.IO not initialized'}), 500
-
+    if socketio:
+        socketio.emit('prediction', sample, broadcast=True)
+        logger.info('Emitted synthetic prediction for testing')
+        return jsonify({'status': 'emitted', 'sample': sample})
+    else:
+        return jsonify({'error': 'Socket.IO not initialized'}), 500
 
 @socketio.on('connect')
 def handle_connect():
@@ -349,6 +387,14 @@ def handle_connect():
     logger.info(f"Client connected: {request.sid}")
     print(f"[Socket.IO] Client connected: {request.sid}")
     emit('connected', {'message': 'Connected to Real-Time IDS', 'status': 'connected'})
+    data_source = realtime_ids.traffic_capture.get_data_source_type() if realtime_ids else "unknown"
+    emit('status', {
+        'message': 'Connected',
+        'ids_running': realtime_ids.running if realtime_ids else False,
+        'data_source': data_source,
+        'active_flows': realtime_ids.traffic_capture.get_flow_count() if realtime_ids else 0,
+        'timestamp': time.time()
+    })
 
 
 @socketio.on('disconnect')
@@ -363,9 +409,72 @@ def handle_start_monitoring():
     """Start real-time monitoring."""
     if realtime_ids and not realtime_ids.running:
         realtime_ids.start()
-        emit('status', {'message': 'Monitoring started'})
+        data_source = realtime_ids.traffic_capture.get_data_source_type()
+        emit('status', {
+            'message': 'Monitoring started',
+            'ids_running': True,
+            'data_source': data_source,
+            'active_flows': realtime_ids.traffic_capture.get_flow_count(),
+            'timestamp': time.time()
+        })
+        heartbeat_payload = {
+            'message': 'Monitoring started',
+            'ids_running': True,
+            'data_source': data_source,
+            'active_flows': realtime_ids.traffic_capture.get_flow_count(),
+            'timestamp': time.time(),
+            'heartbeat': True
+        }
+        emit('heartbeat', heartbeat_payload)
+        payload = {
+            'label': 'normal',
+            'anomaly_type': 'Monitoring Started',
+            'score': 0.0,
+            'model_type': 'system',
+            'complexity': 0.0,
+            'timestamp': time.time(),
+            'src_ip': '127.0.0.1',
+            'dst_ip': '127.0.0.1',
+            'src_port': 0,
+            'dst_port': 0,
+            'protocol': 'SYSTEM',
+            'flow_duration': 0.0,
+            'total_packets': 0,
+            'total_bytes': 0,
+            'data_source': data_source
+        }
+        emit('prediction', payload)
+        logger.info('Sent start_monitoring prediction event to client')
+    elif realtime_ids and realtime_ids.running:
+        data_source = realtime_ids.traffic_capture.get_data_source_type()
+        emit('status', {
+            'message': 'Monitoring already running',
+            'ids_running': True,
+            'data_source': data_source,
+            'active_flows': realtime_ids.traffic_capture.get_flow_count(),
+            'timestamp': time.time()
+        })
+        payload = {
+            'label': 'normal',
+            'anomaly_type': 'Monitoring already running',
+            'score': 0.0,
+            'model_type': 'system',
+            'complexity': 0.0,
+            'timestamp': time.time(),
+            'src_ip': '127.0.0.1',
+            'dst_ip': '127.0.0.1',
+            'src_port': 0,
+            'dst_port': 0,
+            'protocol': 'SYSTEM',
+            'flow_duration': 0.0,
+            'total_packets': 0,
+            'total_bytes': 0,
+            'data_source': data_source
+        }
+        emit('prediction', payload)
+        logger.info('Sent already-running prediction event to client')
     else:
-        emit('status', {'message': 'Monitoring already running or IDS not initialized'})
+        emit('status', {'message': 'IDS not initialized', 'ids_running': False, 'data_source': 'unknown', 'active_flows': 0, 'timestamp': time.time()})
 
 
 @socketio.on('stop_monitoring')
@@ -373,25 +482,61 @@ def handle_stop_monitoring():
     """Stop real-time monitoring."""
     if realtime_ids and realtime_ids.running:
         realtime_ids.stop()
-        emit('status', {'message': 'Monitoring stopped'})
+        data_source = realtime_ids.traffic_capture.get_data_source_type()
+        emit('status', {
+            'message': 'Monitoring stopped',
+            'ids_running': False,
+            'data_source': data_source,
+            'active_flows': realtime_ids.traffic_capture.get_flow_count(),
+            'timestamp': time.time()
+        })
+        heartbeat_payload = {
+            'message': 'Monitoring stopped',
+            'ids_running': False,
+            'data_source': data_source,
+            'active_flows': realtime_ids.traffic_capture.get_flow_count(),
+            'timestamp': time.time(),
+            'heartbeat': True
+        }
+        emit('heartbeat', heartbeat_payload)
+        payload = {
+            'label': 'normal',
+            'anomaly_type': 'Monitoring Stopped',
+            'score': 0.0,
+            'model_type': 'system',
+            'complexity': 0.0,
+            'timestamp': time.time(),
+            'src_ip': '127.0.0.1',
+            'dst_ip': '127.0.0.1',
+            'src_port': 0,
+            'dst_port': 0,
+            'protocol': 'SYSTEM',
+            'flow_duration': 0.0,
+            'total_packets': 0,
+            'total_bytes': 0,
+            'data_source': data_source
+        }
+        emit('prediction', payload)
+        logger.info('Sent stop_monitoring prediction event to client')
     else:
-        emit('status', {'message': 'Monitoring not running'})
+        emit('status', {'message': 'Monitoring not running', 'ids_running': False, 'data_source': realtime_ids.traffic_capture.get_data_source_type() if realtime_ids else 'unknown', 'active_flows': realtime_ids.traffic_capture.get_flow_count() if realtime_ids else 0, 'timestamp': time.time()})
 
 
-def initialize_ids(model_path: str, model_type: str = 'ml', interface: Optional[str] = None):
+def initialize_ids(ml_model_path: str, dl_model_path: str, complexity_threshold: float = 50.0, interface: Optional[str] = None):
     """
-    Initialize the real-time IDS system.
+    Initialize the real-time IDS system with adaptive predictor.
     
     Args:
-        model_path: Path to ML model
-        model_type: Type of model ('ml' or 'dl')
+        ml_model_path: Path to ML model
+        dl_model_path: Path to DL model
+        complexity_threshold: Threshold for model selection (> threshold uses DL)
         interface: Network interface for capture
     """
     global realtime_ids
     
     try:
-        realtime_ids = RealtimeIDS(model_path, model_type, interface)
-        logger.info("Real-time IDS initialized successfully")
+        realtime_ids = RealtimeIDS(ml_model_path, dl_model_path, complexity_threshold, interface)
+        logger.info("Real-time IDS initialized successfully with adaptive predictor")
         return True
     except Exception as e:
         logger.error(f"Failed to initialize IDS: {e}")
@@ -403,16 +548,20 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Real-Time Intrusion Detection System API')
-    parser.add_argument('--model', type=str, default='models/ml_best.pkl',
+    parser.add_argument('--ml-model', type=str, default='models/ml_best.pkl',
                        help='Path to ML model file')
-    parser.add_argument('--model-type', type=str, default='ml', choices=['ml', 'dl'],
-                       help='Type of model (ml or dl)')
+    parser.add_argument('--dl-model', type=str, default='models/dl_lstm.h5',
+                       help='Path to DL model file')
+    parser.add_argument('--complexity-threshold', type=float, default=50.0,
+                       help='Complexity threshold for model selection (> threshold uses DL)')
     parser.add_argument('--interface', type=str, default=None,
                        help='Network interface for capture (None for auto-detect)')
     parser.add_argument('--port', type=int, default=5000,
                        help='Port to run the server on')
     parser.add_argument('--host', type=str, default='0.0.0.0',
                        help='Host to bind to')
+    parser.add_argument('--autostart', action='store_true',
+                       help='Automatically start IDS monitoring on server launch')
     
     args = parser.parse_args()
     
@@ -420,16 +569,21 @@ def main():
         print("Flask not available. Install with: pip install flask flask-cors flask-socketio")
         return 1
     
-    # Initialize IDS
-    if not initialize_ids(args.model, args.model_type, args.interface):
+    # Initialize IDS with adaptive predictor
+    if not initialize_ids(args.ml_model, args.dl_model, args.complexity_threshold, args.interface):
         print("Failed to initialize IDS")
         return 1
-    
-    # Start IDS
-    realtime_ids.start()
-    
+
+    if args.autostart:
+        realtime_ids.start()
+        print("Auto-start enabled: IDS monitoring started")
+    else:
+        print("Auto-start disabled: IDS monitoring is stopped until Start Detection is requested")
+
     print(f"Starting Real-Time IDS API server on {args.host}:{args.port}")
-    print(f"Model: {args.model} ({args.model_type})")
+    print(f"ML Model: {args.ml_model}")
+    print(f"DL Model: {args.dl_model}")
+    print(f"Complexity Threshold: {args.complexity_threshold}")
     print(f"Interface: {args.interface or 'auto-detect'}")
     print("\nEndpoints:")
     print(f"  - http://{args.host}:{args.port}/")

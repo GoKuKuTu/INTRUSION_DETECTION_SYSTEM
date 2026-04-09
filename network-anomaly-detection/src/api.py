@@ -16,7 +16,7 @@ Features:
 
 Usage:
     python src/api.py  # Start local server
-    curl -X POST "http://localhost:8000/predict" -H "Content-Type: application/json" -d '{"features": [1,2,3,...]}'
+    curl -X POST "http://localhost:8001/predict" -H "Content-Type: application/json" -d '{"features": [1,2,3,...]}'
 """
 
 import os
@@ -25,10 +25,12 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Union, Optional
 import warnings
+import asyncio
 
 # FastAPI imports
 try:
-    from fastapi import FastAPI, HTTPException, Query
+    from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+    from fastapi import BackgroundTasks
     from fastapi.responses import JSONResponse
     from fastapi.middleware.cors import CORSMiddleware
     from pydantic import BaseModel, Field, validator
@@ -121,10 +123,20 @@ class PredictionResponse(BaseModel):
     """
     Response model for prediction results.
     """
-    label: str = Field(..., description="Predicted label: 'normal' or 'anomaly'")
+    label: str = Field(..., description="High-level label: 'normal' or 'anomaly'")
     score: float = Field(..., description="Prediction confidence score (0-1)")
     model: str = Field(..., description="Name of the model used for prediction")
     model_type: str = Field(..., description="Type of model: 'ml' or 'dl'")
+    is_anomaly: bool = Field(
+        ..., description="True if the traffic is predicted as anomalous"
+    )
+    anomaly_type: str = Field(
+        ...,
+        description=(
+            "Specific attack / anomaly class if available (e.g., 'DDoS', 'PortScan'); "
+            "'normal' when no attack is detected"
+        ),
+    )
 
 
 class ModelLoader:
@@ -365,6 +377,213 @@ class ModelLoader:
 model_loader = ModelLoader()
 
 
+def choose_model_for_features(
+    features: Union[List[float], Dict[str, float]]
+) -> tuple[str, str]:
+    """
+    Simple heuristic to choose between ML and DL models.
+
+    - Use ML for simpler / low-variance feature patterns
+    - Use DL for more complex / high-variance patterns, but only if a DL
+      model file is available and TensorFlow is installed.
+
+    Returns:
+        (model_type, model_path)
+    """
+    # Default model paths
+    ml_path = Path("models/ml_best.pkl")
+    dl_path = Path("models/dl_lstm.h5")
+
+    # If DL is not available or file missing, always fall back to ML
+    dl_usable = DL_AVAILABLE and dl_path.exists()
+
+    # Convert features to numpy array for a basic complexity metric
+    if isinstance(features, dict):
+        values = np.array(list(features.values()), dtype=float)
+    else:
+        values = np.array(features, dtype=float)
+
+    if values.size == 0 or not dl_usable:
+        return "ml", str(ml_path)
+
+    # Heuristic: combine standard deviation and maximum magnitude
+    std = float(np.std(values))
+    max_val = float(np.max(np.abs(values)))
+    complexity_score = std + 0.001 * max_val
+
+    # Threshold chosen empirically for typical flow features; can be tuned.
+    # For small, stable flows -> ML; for spiky / large-magnitude flows -> DL.
+    if complexity_score > 50.0:
+        logger.info(
+            f"Auto model selection: using DL (complexity={complexity_score:.2f}, std={std:.2f}, max={max_val:.2f})"
+        )
+        return "dl", str(dl_path)
+
+    logger.info(
+        f"Auto model selection: using ML (complexity={complexity_score:.2f}, std={std:.2f}, max={max_val:.2f})"
+    )
+    return "ml", str(ml_path)
+
+
+# ---------------------------------------------------------------------------
+# Real-time streaming support (inspired by real-time IDS architectures)
+# ---------------------------------------------------------------------------
+
+# Connected WebSocket clients
+active_clients: List[WebSocket] = []
+
+# Flag to control background real-time loop
+realtime_running: bool = False
+
+
+async def predict_from_features_async(
+    features: List[float],
+    model: str = "ml",
+    path: str = "models/ml_best.pkl",
+) -> PredictionResponse:
+    """
+    Async helper to run a prediction using the existing model pipeline.
+    This reuses the same logic as the /predict endpoint.
+    """
+    # Determine effective model and path, supporting 'auto'
+    if model == "auto":
+        effective_model, effective_path = choose_model_for_features(features)
+    else:
+        effective_model, effective_path = model, path
+
+    if effective_model not in ["ml", "dl"]:
+        raise HTTPException(
+            status_code=400, detail="Model type must be 'ml', 'dl', or 'auto'"
+        )
+
+    model_path = Path(effective_path)
+    if not model_path.exists():
+        raise HTTPException(
+            status_code=404, detail=f"Model file not found: {effective_path}"
+        )
+
+    # Load model if not already loaded
+    model_loaded = False
+    if effective_model == "ml":
+        if model_loader.ml_model is None:
+            model_loaded = model_loader.load_ml_model(str(model_path))
+        else:
+            model_loaded = True
+    else:
+        if model_loader.dl_model is None:
+            model_loaded = model_loader.load_dl_model(str(model_path))
+        else:
+            model_loaded = True
+
+    if not model_loaded:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load {effective_model} model from {effective_path}",
+        )
+
+    # Preprocess and predict
+    processed_features = model_loader.preprocess_features(features, effective_model)
+    if effective_model == "ml":
+        prediction, confidence = model_loader.predict_ml(processed_features)
+    else:
+        prediction, confidence = model_loader.predict_dl(processed_features)
+
+    # Convert prediction to high-level label and specific anomaly type
+    original_label = None
+    if effective_model == "ml" and model_loader.label_encoder is not None:
+        try:
+            original_label = model_loader.label_encoder.inverse_transform(
+                [prediction]
+            )[0]
+            is_anomaly = original_label != "BENIGN"
+        except Exception:
+            is_anomaly = prediction == 1
+    else:
+        is_anomaly = prediction == 1
+
+    label = "anomaly" if is_anomaly else "normal"
+    if is_anomaly and original_label:
+        anomaly_type = original_label
+    else:
+        anomaly_type = "normal"
+
+    # Determine model name
+    model_name = model_path.stem
+    if model_loader.model_metadata and "model_name" in model_loader.model_metadata:
+        model_name = model_loader.model_metadata["model_name"]
+
+    logger.info(
+        f"[realtime] Prediction: {label} (type={anomaly_type}), "
+        f"confidence: {confidence:.4f}, model: {model_name}"
+    )
+
+    return PredictionResponse(
+        label=label,
+        score=float(confidence),
+        model=model_name,
+        model_type=effective_model,
+        is_anomaly=is_anomaly,
+        anomaly_type=anomaly_type,
+    )
+
+
+async def realtime_loop():
+    """
+    Background loop that simulates streaming network flows, performs
+    model inference, and broadcasts results to connected WebSocket clients.
+    """
+    global realtime_running
+
+    logger.info("Real-time loop started")
+    try:
+        while realtime_running:
+            # Example synthetic feature vector; align dimensions with training features.
+            features = [
+                100.0,  # flow duration
+                50.0,   # packet count
+                1024.0, # byte count
+                1.0,    # protocol type
+                80.0,   # port number
+            ]
+
+            try:
+                prediction = await predict_from_features_async(
+                    features, model="auto", path="models/ml_best.pkl"
+                )
+            except Exception as e:
+                logger.error(f"Real-time prediction failed: {e}")
+                await asyncio.sleep(1.0)
+                continue
+
+            # Broadcast to all connected WebSocket clients
+            payload = {
+                "features": features,
+                "prediction": prediction.dict(),
+            }
+
+            stale_clients: List[WebSocket] = []
+            for ws in active_clients:
+                try:
+                    await ws.send_json(payload)
+                except Exception as ws_err:
+                    logger.warning(f"WebSocket send failed, marking client stale: {ws_err}")
+                    stale_clients.append(ws)
+
+            # Remove stale clients
+            for ws in stale_clients:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+                if ws in active_clients:
+                    active_clients.remove(ws)
+
+            # Control streaming rate (1 event per second)
+            await asyncio.sleep(1.0)
+    finally:
+        logger.info("Real-time loop stopped")
+
+
 @app.get("/", response_model=Dict[str, str])
 async def root():
     """Root endpoint with API information."""
@@ -385,8 +604,13 @@ async def health_check():
 @app.post("/predict", response_model=PredictionResponse)
 async def predict(
     request: FeatureRequest,
-    model: str = Query("ml", description="Model type: 'ml' or 'dl'"),
-    path: str = Query("models/ml_best.pkl", description="Path to the model file")
+    model: str = Query(
+        "auto",
+        description="Model type: 'ml', 'dl', or 'auto' for automatic selection",
+    ),
+    path: str = Query(
+        "models/ml_best.pkl", description="Path to the model file (for 'ml' or 'dl')"
+    ),
 ):
     """
     Predict network anomaly using the specified model.
@@ -400,62 +624,94 @@ async def predict(
         PredictionResponse: Prediction results with label, score, and model info
     """
     try:
-        # Validate model type
-        if model not in ['ml', 'dl']:
-            raise HTTPException(status_code=400, detail="Model type must be 'ml' or 'dl'")
-        
+        # Determine effective model and model path, supporting 'auto'
+        if model == "auto":
+            effective_model, effective_path = choose_model_for_features(
+                request.features
+            )
+        else:
+            effective_model, effective_path = model, path
+
+        if effective_model not in ["ml", "dl"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Model type must be 'ml', 'dl', or 'auto'",
+            )
+
         # Check if model file exists
-        model_path = Path(path)
+        model_path = Path(effective_path)
         if not model_path.exists():
-            raise HTTPException(status_code=404, detail=f"Model file not found: {path}")
-        
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model file not found: {effective_path}",
+            )
+
         # Load model if not already loaded
         model_loaded = False
-        if model == 'ml':
-            if model_loader.ml_model is None or str(model_loader.ml_model) != str(model_path):
+        if effective_model == "ml":
+            if model_loader.ml_model is None or str(model_loader.ml_model) != str(
+                model_path
+            ):
                 model_loaded = model_loader.load_ml_model(str(model_path))
         else:
-            if model_loader.dl_model is None or str(model_loader.dl_model) != str(model_path):
+            if model_loader.dl_model is None or str(model_loader.dl_model) != str(
+                model_path
+            ):
                 model_loaded = model_loader.load_dl_model(str(model_path))
-        
+
         if not model_loaded:
-            raise HTTPException(status_code=500, detail=f"Failed to load {model} model from {path}")
-        
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load {effective_model} model from {effective_path}",
+            )
+
         # Preprocess features
-        processed_features = model_loader.preprocess_features(request.features, model)
-        
+        processed_features = model_loader.preprocess_features(
+            request.features, effective_model
+        )
+
         # Make prediction
-        if model == 'ml':
+        if effective_model == "ml":
             prediction, confidence = model_loader.predict_ml(processed_features)
         else:
             prediction, confidence = model_loader.predict_dl(processed_features)
         
-        # Convert prediction to label
-        if model == 'ml' and model_loader.label_encoder is not None:
+        # Convert prediction to label and anomaly type
+        original_label = None
+        if effective_model == 'ml' and model_loader.label_encoder is not None:
             # Use label encoder to get original label
             try:
-                label = model_loader.label_encoder.inverse_transform([prediction])[0]
-                is_anomaly = label != 'BENIGN'
-            except:
+                original_label = model_loader.label_encoder.inverse_transform([prediction])[0]
+                is_anomaly = original_label != 'BENIGN'
+            except Exception:
                 is_anomaly = prediction == 1
         else:
             # Binary classification: 0 = normal, 1 = anomaly
             is_anomaly = prediction == 1
         
         label = "anomaly" if is_anomaly else "normal"
+        if is_anomaly and original_label:
+            anomaly_type = original_label
+        else:
+            anomaly_type = "normal"
         
         # Get model name
         model_name = model_path.stem
         if model_loader.model_metadata and 'model_name' in model_loader.model_metadata:
             model_name = model_loader.model_metadata['model_name']
         
-        logger.info(f"Prediction: {label}, confidence: {confidence:.4f}, model: {model_name}")
+        logger.info(
+            f"Prediction: {label} (type={anomaly_type}), "
+            f"confidence: {confidence:.4f}, model: {model_name}"
+        )
         
         return PredictionResponse(
             label=label,
             score=float(confidence),
             model=model_name,
-            model_type=model
+            model_type=effective_model,
+            is_anomaly=is_anomaly,
+            anomaly_type=anomaly_type,
         )
         
     except HTTPException:
@@ -492,6 +748,59 @@ async def list_models():
         raise HTTPException(status_code=500, detail=f"Failed to list models: {e}")
 
 
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    """
+    WebSocket endpoint for real-time IDS updates.
+
+    Clients receive a continuous stream of feature vectors and predictions
+    produced by the background real-time loop.
+    """
+    await ws.accept()
+    active_clients.append(ws)
+    logger.info("WebSocket client connected")
+
+    try:
+        # Keep connection open; we do not require client messages.
+        while True:
+            # We only care that the client is still alive; ignore incoming data.
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
+    except Exception as e:
+        logger.warning(f"WebSocket error: {e}")
+    finally:
+        if ws in active_clients:
+            active_clients.remove(ws)
+
+
+@app.post("/realtime/start", response_model=Dict[str, str])
+async def start_realtime(background_tasks: BackgroundTasks):
+    """
+    Start the background real-time IDS loop.
+    """
+    global realtime_running
+    if not realtime_running:
+        realtime_running = True
+        background_tasks.add_task(realtime_loop)
+        logger.info("Real-time IDS started")
+        return {"status": "started"}
+    return {"status": "already_running"}
+
+
+@app.post("/realtime/stop", response_model=Dict[str, str])
+async def stop_realtime():
+    """
+    Stop the background real-time IDS loop.
+    """
+    global realtime_running
+    if realtime_running:
+        realtime_running = False
+        logger.info("Real-time IDS stop requested")
+        return {"status": "stopping"}
+    return {"status": "not_running"}
+
+
 def main():
     """
     Main function to run the FastAPI server.
@@ -501,16 +810,16 @@ def main():
         return 1
     
     print("Starting Network Anomaly Detection API server...")
-    print("API Documentation: http://localhost:8000/docs")
-    print("Alternative Docs: http://localhost:8000/redoc")
-    print("Health Check: http://localhost:8000/health")
+    print("API Documentation: http://localhost:8001/docs")
+    print("Alternative Docs: http://localhost:8001/redoc")
+    print("Health Check: http://localhost:8001/health")
     print()
     
     # Run the server
     uvicorn.run(
         "api:app",
         host="0.0.0.0",
-        port=8000,
+        port=8001,
         reload=False,  # Disable reload to avoid import issues
         log_level="info"
     )
@@ -524,25 +833,25 @@ if __name__ == "__main__":
     print("Example curl commands:")
     print()
     print("1. Predict with ML model (default):")
-    print('curl -X POST "http://localhost:8000/predict" \\')
+    print('curl -X POST "http://localhost:8001/predict" \\')
     print('  -H "Content-Type: application/json" \\')
     print('  -d \'{"features": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]}\'')
     print()
     print("2. Predict with DL model:")
-    print('curl -X POST "http://localhost:8000/predict?model=dl&path=models/dl_lstm.h5" \\')
+    print('curl -X POST "http://localhost:8001/predict?model=dl&path=models/dl_lstm.h5" \\')
     print('  -H "Content-Type: application/json" \\')
     print('  -d \'{"features": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]}\'')
     print()
     print("3. Predict with named features:")
-    print('curl -X POST "http://localhost:8000/predict" \\')
+    print('curl -X POST "http://localhost:8001/predict" \\')
     print('  -H "Content-Type: application/json" \\')
     print('  -d \'{"features": {"src_port": 80, "dst_port": 443, "protocol": 1, "flow_duration": 100}}\'')
     print()
     print("4. List available models:")
-    print('curl -X GET "http://localhost:8000/models"')
+    print('curl -X GET "http://localhost:8001/models"')
     print()
     print("5. Health check:")
-    print('curl -X GET "http://localhost:8000/health"')
+    print('curl -X GET "http://localhost:8001/health"')
     print()
     print("="*60)
     print()
