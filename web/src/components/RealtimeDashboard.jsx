@@ -40,10 +40,7 @@ const RealTimeDashboard = () => {
         setStatusMessage(data.message);
       }
       setLastEventType('prediction');
-      setEvents((prev) => {
-        const next = [data, ...prev];
-        return next.slice(0, 50);
-      });
+      setEvents((prev) => [data, ...prev]);
     });
 
     socket.on('status', (data) => {
@@ -89,10 +86,15 @@ const RealTimeDashboard = () => {
         setIsDetecting(data.ids_running);
       }
       setLastEventType('heartbeat');
+      // Server also emits a matching `prediction` for start/stop with full detail;
+      // skip duplicating those rows in the feed (periodic heartbeats use "Monitoring heartbeat").
+      const skipEventRow =
+        data.message === 'Monitoring started' ||
+        data.message === 'Monitoring stopped';
       const heartbeatEvent = {
         label: 'normal',
         anomaly_type: data.message || 'Live heartbeat',
-        score: 0.0,
+        score: 1.0,
         model_type: 'system',
         complexity: 0.0,
         timestamp: data.timestamp || Date.now() / 1000,
@@ -108,10 +110,9 @@ const RealTimeDashboard = () => {
         heartbeat: true
       };
       setHeartbeatCount((count) => count + 1);
-      setEvents((prev) => {
-        const next = [heartbeatEvent, ...prev];
-        return next.slice(0, 50);
-      });
+      if (!skipEventRow) {
+        setEvents((prev) => [heartbeatEvent, ...prev]);
+      }
     });
 
     socket.on('disconnect', () => {
@@ -292,7 +293,6 @@ const RealTimeDashboard = () => {
                 const label = e?.label ?? 'unknown';
                 const score = e?.score;
                 const attackType = e?.anomaly_type;
-                const modelType = e?.model_type;
                 const complexity = e?.complexity;
                 const isAnomaly = label === 'anomaly';
 
@@ -317,11 +317,6 @@ const RealTimeDashboard = () => {
                         {typeof score === 'number' && (
                           <span className="text-xs text-gray-700">
                             confidence: {(score * 100).toFixed(1)}%
-                          </span>
-                        )}
-                        {modelType && (
-                          <span className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                            {modelType.toUpperCase()}
                           </span>
                         )}
                       </div>

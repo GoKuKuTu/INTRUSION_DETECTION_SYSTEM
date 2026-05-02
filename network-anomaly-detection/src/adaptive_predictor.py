@@ -267,10 +267,10 @@ class AdaptiveRealtimePredictor:
                 anomaly_type = "Long Duration Flow"
                 confidence = min(flow_duration / 2000, 1.0)
 
-            # Normal traffic
+            # Normal traffic (no rule fired): score = confidence in "normal"
             else:
                 anomaly_type = "normal"
-                confidence = 0.1  # Low confidence for normal traffic
+                confidence = 0.85
 
             result = {
                 'label': 'anomaly' if anomaly_type != 'normal' else 'normal',
@@ -295,7 +295,8 @@ class AdaptiveRealtimePredictor:
         # Get confidence
         if hasattr(self.ml_predictor, 'predict_proba'):
             proba = self.ml_predictor.predict_proba(features)[0]
-            confidence = np.max(proba)
+            idx = int(prediction)
+            confidence = float(proba[idx]) if 0 <= idx < len(proba) else float(np.max(proba))
 
             # Try to get attack type from label encoder
             if self.label_encoder is not None:
@@ -310,7 +311,8 @@ class AdaptiveRealtimePredictor:
             else:
                 anomaly_type = 'normal' if prediction == 0 else 'Unknown Attack'
         else:
-            confidence = 1.0 if prediction == 1 else 0.0
+            # Hard class labels only: report full confidence in the assigned class
+            confidence = 1.0
             anomaly_type = 'normal' if prediction == 0 else 'Unknown Attack'
 
         return int(prediction), float(confidence), anomaly_type
@@ -335,13 +337,14 @@ class AdaptiveRealtimePredictor:
 
         # Handle different output shapes
         if len(prediction_proba.shape) == 0:
-            # Single value (sigmoid output)
-            confidence = float(prediction_proba)
-            prediction = 1 if confidence > 0.5 else 0
+            # Single value (sigmoid): value is P(anomaly); score = confidence in predicted label
+            p_anomaly = float(prediction_proba)
+            prediction = 1 if p_anomaly > 0.5 else 0
+            confidence = p_anomaly if prediction == 1 else (1.0 - p_anomaly)
         else:
-            # Multiple values (softmax output)
-            prediction = np.argmax(prediction_proba)
-            confidence = float(np.max(prediction_proba))
+            # Softmax: confidence for the predicted class index
+            prediction = int(np.argmax(prediction_proba))
+            confidence = float(prediction_proba[prediction])
 
         # Determine anomaly type (simplified for DL models)
         anomaly_type = 'normal' if prediction == 0 else 'Unknown Attack'

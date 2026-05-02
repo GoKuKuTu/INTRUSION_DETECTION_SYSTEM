@@ -178,8 +178,8 @@ class RealtimeIDS:
                         'heartbeat': True
                     }
                     if socketio:
-                        socketio.emit('status', heartbeat_data, broadcast=True)
-                        socketio.emit('heartbeat', heartbeat_data, broadcast=True)
+                        socketio.emit('status', heartbeat_data, namespace='/')
+                        socketio.emit('heartbeat', heartbeat_data, namespace='/')
                         logger.info('Emitted periodic heartbeat update')
                     last_status_time = current_time
                 
@@ -192,6 +192,13 @@ class RealtimeIDS:
                     
                     # Make prediction
                     prediction = self.predictor.predict(features)
+                    complexity_val = float(prediction.get('complexity', 0.0) or 0.0)
+                    # Ensure flow complexity is never silently dropped (e.g. missing key / bad cast)
+                    if complexity_val == 0.0:
+                        try:
+                            complexity_val = float(self.predictor.calculate_complexity(features))
+                        except Exception:
+                            pass
                     
                     # Log attack if detected
                     if prediction['label'] == 'anomaly':
@@ -208,12 +215,12 @@ class RealtimeIDS:
                         'flow_duration': flow.get_duration(),
                         'total_packets': flow.fwd_packets + flow.bwd_packets,
                         'total_bytes': flow.fwd_bytes + flow.bwd_bytes,
-                        'complexity': prediction.get('complexity', 0.0),
+                        'complexity': complexity_val,
                         'data_source': self.traffic_capture.get_data_source_type()
                     }
                     
                     if socketio:
-                        socketio.emit('prediction', prediction_data, broadcast=True)
+                        socketio.emit('prediction', prediction_data, namespace='/')
                         logger.info('Broadcasted prediction event to connected clients')
                 
                 # Small sleep to prevent CPU spinning
@@ -352,34 +359,109 @@ def get_attacks():
         return jsonify({'error': str(e)}), 500
 
 
+def _emit_test_take_first(src, key, default=None):
+    """Return one value from query args or JSON (handles list-like values)."""
+    if hasattr(src, 'getlist'):
+        vals = src.getlist(key)
+        raw = vals[0] if vals else None
+    elif isinstance(src, dict):
+        raw = src.get(key, default)
+    else:
+        raw = default
+    if isinstance(raw, (list, tuple)):
+        raw = raw[0] if raw else default
+    return raw if raw is not None else default
+
+
+def _emit_test_as_str(raw, default):
+    """Coerce query/JSON values to a non-empty string (never call .strip() on unknown types)."""
+    if raw is None:
+        return default
+    s = str(raw).strip()
+    return s if s else default
+
+
 @app.route('/emit_test', methods=['GET', 'POST'])
 def emit_test():
-    """Emit a synthetic prediction event to connected Socket.IO clients.
+    """Emit synthetic `prediction` events to connected Socket.IO clients.
 
-    Use this endpoint to quickly verify frontend reception of `prediction` events.
+    **GET query** or **JSON body (POST)**: ``count``, ``model``, ``anomaly_type``,
+    optional ``label`` (default ``anomaly``).
+
+    Example::
+
+        http://localhost:5001/emit_test?count=20&model=dl&anomaly_type=DDoS%20Attack
     """
-    sample = {
-        'label': 'anomaly',
-        'anomaly_type': 'Synthetic Test',
-        'score': 0.95,
-        'model': 'test_model',
-        'model_type': 'ml',
-        'src_ip': '192.0.2.1',
-        'dst_ip': '198.51.100.2',
-        'src_port': 12345,
-        'dst_port': 80,
-        'protocol': 'TCP',
-        'flow_duration': 12.34,
-        'total_packets': 8,
-        'total_bytes': 1024
-    }
+    try:
+        if request.method == 'POST' and request.is_json:
+            src = request.get_json(silent=True) or {}
+        else:
+            src = request.args
 
-    if socketio:
-        socketio.emit('prediction', sample, broadcast=True)
-        logger.info('Emitted synthetic prediction for testing')
-        return jsonify({'status': 'emitted', 'sample': sample})
-    else:
-        return jsonify({'error': 'Socket.IO not initialized'}), 500
+        raw_count = _emit_test_take_first(src, 'count', 1)
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError):
+            count = 1
+        count = max(1, min(count, 100))
+
+        model = _emit_test_as_str(_emit_test_take_first(src, 'model', None), 'test_model')
+        anomaly_type = _emit_test_as_str(
+            _emit_test_take_first(src, 'anomaly_type', None),
+            'Synthetic Test',
+        )
+        label = _emit_test_as_str(_emit_test_take_first(src, 'label', None), 'anomaly')
+
+        last = None
+        if not socketio:
+            return jsonify({'error': 'Socket.IO not initialized'}), 500
+
+        # Use Engine.IO server emit directly so REST handlers work reliably across
+        # Flask-SocketIO / python-socketio versions (no deprecated ``broadcast=``).
+        srv = getattr(socketio, 'server', None)
+        if srv is None:
+            return jsonify({'error': 'Socket.IO server not available'}), 500
+
+        emit_feats = {
+            'flow_duration': 12.34,
+            'packet_count': 8.0,
+            'byte_count': 1024.0,
+            'protocol': 6.0,
+            'port': 80.0,
+        }
+        emit_cx = 0.0
+        try:
+            if realtime_ids and getattr(realtime_ids, 'predictor', None):
+                emit_cx = float(realtime_ids.predictor.calculate_complexity(emit_feats))
+        except Exception:
+            emit_cx = 0.0
+
+        for i in range(count):
+            sample = {
+                'label': label,
+                'anomaly_type': anomaly_type,
+                'score': 0.95,
+                'model': model,
+                'model_type': model,
+                'src_ip': '192.0.2.1',
+                'dst_ip': '198.51.100.2',
+                'src_port': 12345 + i,
+                'dst_port': 80,
+                'protocol': 'TCP',
+                'flow_duration': 12.34,
+                'total_packets': 8,
+                'total_bytes': 1024,
+                'complexity': emit_cx,
+                'data_source': 'synthetic',
+                'timestamp': time.time(),
+            }
+            srv.emit('prediction', sample, namespace='/')
+            last = sample
+        logger.info('Emitted %s synthetic prediction(s) for testing', count)
+        return jsonify({'status': 'emitted', 'count': count, 'sample': last})
+    except Exception as e:
+        logger.exception('emit_test failed: %s', e)
+        return jsonify({'error': str(e), 'exception': type(e).__name__}), 500
 
 @socketio.on('connect')
 def handle_connect():
@@ -429,7 +511,7 @@ def handle_start_monitoring():
         payload = {
             'label': 'normal',
             'anomaly_type': 'Monitoring Started',
-            'score': 0.0,
+            'score': 1.0,
             'model_type': 'system',
             'complexity': 0.0,
             'timestamp': time.time(),
@@ -457,7 +539,7 @@ def handle_start_monitoring():
         payload = {
             'label': 'normal',
             'anomaly_type': 'Monitoring already running',
-            'score': 0.0,
+            'score': 1.0,
             'model_type': 'system',
             'complexity': 0.0,
             'timestamp': time.time(),
@@ -502,7 +584,7 @@ def handle_stop_monitoring():
         payload = {
             'label': 'normal',
             'anomaly_type': 'Monitoring Stopped',
-            'score': 0.0,
+            'score': 1.0,
             'model_type': 'system',
             'complexity': 0.0,
             'timestamp': time.time(),

@@ -217,7 +217,8 @@ class RealtimePredictor:
         # Get confidence
         if hasattr(self.model, 'predict_proba'):
             proba = self.model.predict_proba(features)[0]
-            confidence = np.max(proba)
+            idx = int(prediction)
+            confidence = float(proba[idx]) if 0 <= idx < len(proba) else float(np.max(proba))
             
             # Try to get attack type from label encoder
             if self.label_encoder is not None:
@@ -232,7 +233,7 @@ class RealtimePredictor:
             else:
                 anomaly_type = 'normal' if prediction == 0 else 'Unknown Attack'
         else:
-            confidence = 1.0 if prediction == 1 else 0.0
+            confidence = 1.0
             anomaly_type = 'normal' if prediction == 0 else 'Unknown Attack'
         
         return int(prediction), float(confidence), anomaly_type
@@ -249,13 +250,12 @@ class RealtimePredictor:
         
         # Handle different output shapes
         if len(prediction_proba.shape) == 0:
-            # Single value (sigmoid output)
-            confidence = float(prediction_proba)
-            prediction = 1 if confidence > 0.5 else 0
+            p_anomaly = float(prediction_proba)
+            prediction = 1 if p_anomaly > 0.5 else 0
+            confidence = p_anomaly if prediction == 1 else (1.0 - p_anomaly)
         else:
-            # Multiple values (softmax output)
-            prediction = np.argmax(prediction_proba)
-            confidence = float(np.max(prediction_proba))
+            prediction = int(np.argmax(prediction_proba))
+            confidence = float(prediction_proba[prediction])
         
         # Determine anomaly type (simplified for DL models)
         anomaly_type = 'normal' if prediction == 0 else 'Unknown Attack'
