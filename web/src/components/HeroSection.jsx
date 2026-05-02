@@ -87,7 +87,7 @@ const HeroSection = () => {
             className="flex flex-col sm:flex-row gap-4 justify-center items-center"
           >
             <a
-              href="https://github.com/yourusername/network-anomaly-detection"
+              href="https://github.com/GoKuKuTu/INTRUSION_DETECTION_SYSTEM.git"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center px-8 py-4 border border-transparent text-lg font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl"

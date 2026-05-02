@@ -181,9 +181,6 @@ const RealTimeDashboard = () => {
             <h2 className="text-3xl md:text-4xl font-bold text-gray-900">
               Real-Time IDS Dashboard
             </h2>
-            <p className="mt-2 text-gray-600">
-              Live stream of network flows and anomaly predictions from the backend (real or synthetic data).
-            </p>
           </div>
           <div className="flex items-center space-x-3">
             <span
@@ -229,32 +226,6 @@ const RealTimeDashboard = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
-          <div className="bg-white rounded-xl shadow p-4">
-            <div className="text-xs uppercase tracking-wide text-gray-500">Last update</div>
-            <div className="mt-2 text-lg font-semibold text-gray-900">
-              {lastStatusTime ? new Date(lastStatusTime * 1000).toLocaleTimeString() : 'No status received yet'}
-            </div>
-            <div className="mt-1 text-xs text-gray-600">{statusMessage || 'No status yet'}</div>
-          </div>
-          <div className="bg-white rounded-xl shadow p-4">
-            <div className="text-xs uppercase tracking-wide text-gray-500">Active flow count</div>
-            <div className="mt-2 text-lg font-semibold text-gray-900">{activeFlows}</div>
-            <div className="mt-1 text-xs text-gray-600">Flows currently captured by the IDS</div>
-          </div>
-          <div className="bg-white rounded-xl shadow p-4">
-            <div className="text-xs uppercase tracking-wide text-gray-500">Data source</div>
-            <div className="mt-2 text-lg font-semibold text-gray-900">{dataSource === 'real' ? 'Real Data' : dataSource === 'synthetic' ? 'Synthetic Data' : 'Unknown'}</div>
-            <div className="mt-1 text-xs text-gray-600">Source of the traffic being analyzed</div>
-          </div>
-          <div className="bg-white rounded-xl shadow p-4">
-            <div className="text-xs uppercase tracking-wide text-gray-500">Heartbeat count</div>
-            <div className="mt-2 text-lg font-semibold text-gray-900">{heartbeatCount}</div>
-            <div className="mt-1 text-xs text-gray-600">Backend heartbeat events received</div>
-            <div className="mt-4 text-xs uppercase tracking-wide text-gray-500">Last backend event</div>
-            <div className="mt-2 text-base font-semibold text-gray-900">{lastEventType}</div>
-          </div>
-        </div>
         <div className="flex items-center space-x-3 mb-6">
           <button
             type="button"
@@ -295,6 +266,7 @@ const RealTimeDashboard = () => {
                 const attackType = e?.anomaly_type;
                 const complexity = e?.complexity;
                 const isAnomaly = label === 'anomaly';
+                const isHeartbeatEvent = e?.heartbeat || attackType === 'Monitoring heartbeat';
 
                 return (
                   <div
@@ -334,13 +306,13 @@ const RealTimeDashboard = () => {
                           )}
                         </div>
                       )}
-                      {(e.total_packets || e.total_bytes) && (
+                      {!isHeartbeatEvent && (e.total_packets || e.total_bytes) && (
                         <div className="mt-1 text-xs text-gray-600">
                           {e.total_packets !== undefined && <span>{e.total_packets} pkt</span>}
                           {e.total_bytes !== undefined && <span>{e.total_packets !== undefined ? ' · ' : ''}{e.total_bytes} bytes</span>}
                         </div>
                       )}
-                      {complexity !== undefined && (
+                      {!isHeartbeatEvent && complexity !== undefined && (
                         <div className="mt-1 text-xs text-gray-600">
                           <span className="font-medium">complexity:</span>{' '}
                           {complexity.toFixed(2)}

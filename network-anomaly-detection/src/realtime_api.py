@@ -398,6 +398,17 @@ def emit_test():
         else:
             src = request.args
 
+        # By default, test emissions follow Start/Stop monitoring state.
+        # Pass allow_when_stopped=true only when you explicitly want to bypass this.
+        allow_when_stopped = str(
+            _emit_test_take_first(src, 'allow_when_stopped', 'false')
+        ).strip().lower() in ('1', 'true', 'yes')
+        if not allow_when_stopped and (not realtime_ids or not realtime_ids.running):
+            return jsonify({
+                'error': 'Monitoring is stopped. Start detection first.',
+                'ids_running': bool(realtime_ids and realtime_ids.running)
+            }), 409
+
         raw_count = _emit_test_take_first(src, 'count', 1)
         try:
             count = int(raw_count)

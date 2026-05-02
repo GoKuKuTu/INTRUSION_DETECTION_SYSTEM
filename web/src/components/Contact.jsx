@@ -32,8 +32,8 @@ const Contact = () => {
     {
       icon: <Github className="w-6 h-6" />,
       title: "GitHub",
-      value: "github.com/yourusername",
-      link: "https://github.com/yourusername",
+      value: "github.com/GoKuKuTu/INTRUSION_DETECTION_SYSTEM",
+      link: "https://github.com/GoKuKuTu/INTRUSION_DETECTION_SYSTEM.git",
       description: "View my projects and contributions"
     },
     {
@@ -48,7 +48,7 @@ const Contact = () => {
   const socialLinks = [
     {
       name: "GitHub Repository",
-      url: "https://github.com/yourusername/network-anomaly-detection",
+      url: "https://github.com/GoKuKuTu/INTRUSION_DETECTION_SYSTEM.git",
       icon: <Github className="w-5 h-5" />,
       description: "View the complete project source code"
     },
@@ -60,7 +60,7 @@ const Contact = () => {
     },
     {
       name: "Project Documentation",
-      url: "https://github.com/yourusername/network-anomaly-detection/blob/main/README.md",
+      url: "https://github.com/GoKuKuTu/INTRUSION_DETECTION_SYSTEM.git/blob/main/README.md",
       icon: <ExternalLink className="w-5 h-5" />,
       description: "Detailed setup and usage guide"
     }
@@ -270,7 +270,7 @@ const Contact = () => {
             </p>
             <div className="flex justify-center space-x-6">
               <a
-                href="https://github.com/yourusername"
+                href="https://github.com/GoKuKuTu/INTRUSION_DETECTION_SYSTEM.git"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-gray-600 hover:text-primary-600 transition-colors duration-200"
