@@ -27,18 +27,24 @@ const RealTimeDashboard = () => {
 
     socket.on('prediction', (data) => {
       console.log('Received prediction:', data);
+
+      const isSystemPrediction =
+        data.model_type === 'system' ||
+        data.anomaly_type === 'Monitoring Stopped' ||
+        data.anomaly_type === 'Monitoring already running' ||
+        data.message === 'Monitoring stopped';
+
       if (data.data_source) {
         setDataSource(data.data_source);
       }
       if (data.message) {
         setStatusMessage(data.message);
       }
-      if (data.data_source) {
-        setDataSource(data.data_source);
+
+      if (isSystemPrediction) {
+        return;
       }
-      if (data.message) {
-        setStatusMessage(data.message);
-      }
+
       setLastEventType('prediction');
       setEvents((prev) => [data, ...prev]);
     });
@@ -253,6 +259,16 @@ const RealTimeDashboard = () => {
           </button>
         </div>
 
+        <div className="mb-6 rounded-xl border border-gray-200 bg-slate-50 p-4 text-sm text-gray-700">
+          <div className="font-semibold text-gray-900 mb-1">Current monitoring state</div>
+          <div>{statusMessage || (isDetecting ? 'Monitoring...' : 'Idle')}</div>
+          <div className="mt-2 text-xs text-gray-500">
+            {isDetecting
+              ? `Running for ${monitorDuration}s`
+              : 'Monitoring is stopped'}
+          </div>
+        </div>
+
         <div className="bg-white rounded-xl shadow-lg p-6 max-h-[480px] overflow-y-auto">
           {events.length === 0 ? (
             <p className="text-gray-500 text-sm">
@@ -312,7 +328,7 @@ const RealTimeDashboard = () => {
                           {e.total_bytes !== undefined && <span>{e.total_packets !== undefined ? ' · ' : ''}{e.total_bytes} bytes</span>}
                         </div>
                       )}
-                      {!isHeartbeatEvent && complexity !== undefined && (
+                      {!isHeartbeatEvent && !isAnomaly && complexity !== undefined && (
                         <div className="mt-1 text-xs text-gray-600">
                           <span className="font-medium">complexity:</span>{' '}
                           {complexity.toFixed(2)}
