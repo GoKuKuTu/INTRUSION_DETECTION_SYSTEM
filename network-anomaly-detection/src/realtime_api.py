@@ -147,6 +147,15 @@ class RealtimeIDS:
             self.processing_thread.start()
         
         logger.info("Real-time IDS started")
+        
+        # Display startup message in terminal
+        print("\n" + "="*80)
+        print("🚀 REAL-TIME INTRUSION DETECTION SYSTEM STARTED")
+        print("="*80)
+        print("📊 Monitoring network traffic for anomalies...")
+        print("🎯 Strategy: Rule-based → ML (known attacks) → DL (unknown patterns)")
+        print("📝 Real-time output will be displayed below:")
+        print("-" * 80)
     
     def stop(self):
         """Stop real-time IDS."""
@@ -158,6 +167,11 @@ class RealtimeIDS:
             except Exception:
                 pass
         logger.info("Real-time IDS stopped")
+        
+        # Display shutdown message in terminal
+        print("\n" + "-"*80)
+        print("🛑 REAL-TIME INTRUSION DETECTION SYSTEM STOPPED")
+        print("-"*80)
     
     def _processing_loop(self):
         """Main processing loop for real-time predictions."""
@@ -181,6 +195,12 @@ class RealtimeIDS:
                         socketio.emit('status', heartbeat_data, namespace='/')
                         socketio.emit('heartbeat', heartbeat_data, namespace='/')
                         logger.info('Emitted periodic heartbeat update')
+                    
+                    # Display status in terminal
+                    active_flows = self.traffic_capture.get_flow_count()
+                    data_source = self.traffic_capture.get_data_source_type()
+                    print(f"[{time.strftime('%H:%M:%S')}] 💓 HEARTBEAT | Active flows: {active_flows} | Source: {data_source}")
+                    
                     last_status_time = current_time
                 
                 # Get expired flows (completed flows)
@@ -199,6 +219,19 @@ class RealtimeIDS:
                             complexity_val = float(self.predictor.calculate_complexity(features))
                         except Exception:
                             pass
+                    
+                    # Display prediction in terminal
+                    status = "🚨 ATTACK" if prediction['label'] == 'anomaly' else "✅ NORMAL"
+                    model_info = f"[{prediction.get('model_type', 'unknown').upper()}]"
+                    confidence = prediction.get('score', 0.0)
+                    
+                    print(f"[{time.strftime('%H:%M:%S')}] {status} | {model_info} | "
+                          f"{flow.src_ip}:{flow.src_port} → {flow.dst_ip}:{flow.dst_port} | "
+                          f"Type: {prediction.get('anomaly_type', 'normal')} | "
+                          f"Conf: {confidence:.3f} | "
+                          f"Packets: {flow.fwd_packets + flow.bwd_packets} | "
+                          f"Bytes: {flow.fwd_bytes + flow.bwd_bytes} | "
+                          f"Duration: {flow.get_duration():.1f}s")
                     
                     # Log attack if detected
                     if prediction['label'] == 'anomaly':
@@ -398,16 +431,11 @@ def emit_test():
         else:
             src = request.args
 
-        # By default, test emissions follow Start/Stop monitoring state.
-        # Pass allow_when_stopped=true only when you explicitly want to bypass this.
+        # Test emissions can run even when monitoring is stopped (for synthetic testing)
+        # But we log it clearly
         allow_when_stopped = str(
-            _emit_test_take_first(src, 'allow_when_stopped', 'false')
+            _emit_test_take_first(src, 'allow_when_stopped', 'true')
         ).strip().lower() in ('1', 'true', 'yes')
-        if not allow_when_stopped and (not realtime_ids or not realtime_ids.running):
-            return jsonify({
-                'error': 'Monitoring is stopped. Start detection first.',
-                'ids_running': bool(realtime_ids and realtime_ids.running)
-            }), 409
 
         raw_count = _emit_test_take_first(src, 'count', 1)
         try:
@@ -467,6 +495,16 @@ def emit_test():
                 'timestamp': time.time(),
             }
             srv.emit('prediction', sample, namespace='/')
+            
+            # Display synthetic test in terminal
+            status = "🚨 ATTACK" if label == 'anomaly' else "✅ NORMAL"
+            model_display = f"[{model.upper()}]" if model else "[SYNTHETIC]"
+            print(f"[{time.strftime('%H:%M:%S')}] {status} | {model_display} | "
+                  f"192.0.2.1:12345 → 198.51.100.2:80 | "
+                  f"Type: {anomaly_type} | Conf: 0.950 | "
+                  f"Packets: 8 | Bytes: 1024 | "
+                  f"[SYNTHETIC TEST] ({i+1}/{count})")
+            
             last = sample
         logger.info('Emitted %s synthetic prediction(s) for testing', count)
         return jsonify({'status': 'emitted', 'count': count, 'sample': last})

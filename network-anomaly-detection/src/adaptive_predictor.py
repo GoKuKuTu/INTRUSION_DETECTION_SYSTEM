@@ -47,18 +47,23 @@ logger = logging.getLogger(__name__)
 
 class AdaptiveRealtimePredictor:
     """
-    Adaptive real-time prediction service that selects between ML and DL models
-    based on flow complexity.
+    Adaptive real-time prediction service that selects between rule-based detection,
+    ML models for known attacks, and DL models for unknown/novel patterns.
+
+    Strategy:
+    - Known attack patterns (DDoS, PortScan, BruteForce, etc.) → Rule-based + ML
+    - Unknown/novel patterns → DL models for anomaly detection
+    - Normal traffic → ML models for classification
     """
 
     def __init__(self, ml_model_path: str = None, dl_model_path: str = None, complexity_threshold: float = 50.0):
         """
-        Initialize adaptive predictor with rule-based detection.
+        Initialize adaptive predictor with rule-based detection for known attacks.
 
         Args:
-            ml_model_path: Path to ML model file (optional for rule-based)
-            dl_model_path: Path to DL model file (optional for rule-based)
-            complexity_threshold: Threshold for model selection (> threshold uses DL)
+            ml_model_path: Path to ML model file (used for known attacks and normal traffic)
+            dl_model_path: Path to DL model file (used for unknown/novel patterns)
+            complexity_threshold: Threshold for model selection (kept for backward compatibility)
         """
         self.ml_model_path = Path(ml_model_path) if ml_model_path else None
         self.dl_model_path = Path(dl_model_path) if dl_model_path else None
@@ -84,8 +89,8 @@ class AdaptiveRealtimePredictor:
             'Malware': 'Malware',
         }
 
-        logger.info(f"Initializing AdaptiveRealtimePredictor (Rule-based)")
-        logger.info(f"Complexity Threshold: {complexity_threshold}")
+        logger.info(f"Initializing AdaptiveRealtimePredictor (Rule-based for known attacks, ML/DL for unknown)")
+        logger.info(f"Complexity Threshold: {complexity_threshold} (kept for backward compatibility)")
 
         # Try to load models if provided, but don't fail if not available
         self._load_models()
@@ -189,24 +194,26 @@ class AdaptiveRealtimePredictor:
 
         return complexity
 
-    def select_model(self, complexity: float) -> str:
+    def select_model(self, is_known_attack: bool) -> str:
         """
-        Select appropriate model based on complexity.
+        Select appropriate model based on attack knowledge.
 
         Args:
-            complexity: Calculated complexity score
+            is_known_attack: True if flow matches known attack patterns
 
         Returns:
             Model type ('ml' or 'dl')
         """
-        if complexity > self.complexity_threshold and self.dl_predictor is not None:
-            return 'dl'
+        if is_known_attack and self.ml_predictor is not None:
+            return 'ml'  # Use ML for known attack patterns
+        elif self.dl_predictor is not None:
+            return 'dl'  # Use DL for unknown/novel patterns
         else:
-            return 'ml'
+            return 'ml'  # Fallback to ML if DL not available
 
     def predict(self, flow_features: Dict[str, float]) -> Dict[str, any]:
         """
-        Make prediction using simplified rule-based system for 5 features.
+        Make prediction using rule-based detection for known attacks and ML/DL for unknown patterns.
 
         Args:
             flow_features: Dictionary of flow features
@@ -215,12 +222,6 @@ class AdaptiveRealtimePredictor:
             Dictionary with prediction results
         """
         try:
-            # Calculate complexity
-            complexity = self.calculate_complexity(flow_features)
-
-            # Select model (for display purposes)
-            model_type = self.select_model(complexity)
-
             # Extract simplified features
             flow_duration = flow_features.get('flow_duration', 0)
             packet_count = flow_features.get('packet_count', 0)
@@ -228,60 +229,109 @@ class AdaptiveRealtimePredictor:
             protocol = flow_features.get('protocol', 0)
             port = flow_features.get('port', 0)
 
-            # Rule-based anomaly detection for specific attack types
+            # Rule-based anomaly detection for specific known attack types
             anomaly_type = "normal"
             confidence = 0.0
+            is_known_attack = False
 
             # DDoS Attack - High packet count and byte count
             if packet_count > 1000 and byte_count > 50000:
                 anomaly_type = "DDoS Attack"
                 confidence = min((packet_count + byte_count / 100) / 2000, 1.0)
+                is_known_attack = True
 
             # Port Scan - High flow duration with low packet count
             elif flow_duration > 500 and packet_count < 10:
                 anomaly_type = "Port Scan"
                 confidence = min(flow_duration / 1000, 1.0)
+                is_known_attack = True
 
             # Brute Force - High packet count with low byte count
             elif packet_count > 500 and byte_count < 1000:
                 anomaly_type = "Brute Force Attack"
                 confidence = min(packet_count / 1000, 1.0)
+                is_known_attack = True
 
             # Suspicious Protocol - Unusual protocol usage
             elif protocol not in [1, 6, 17]:  # Not ICMP, TCP, or UDP
                 anomaly_type = "Suspicious Protocol"
                 confidence = 0.8
+                is_known_attack = True
 
             # Suspicious Port Access - Well-known attack ports
             elif port in [22, 23, 135, 139, 445, 1433, 3389]:  # SSH, Telnet, RPC, SMB, SQL, RDP
                 anomaly_type = "Suspicious Port Access"
                 confidence = 0.7
+                is_known_attack = True
 
             # High Traffic Anomaly - Very high byte count
             elif byte_count > 100000:
                 anomaly_type = "High Traffic Anomaly"
                 confidence = min(byte_count / 200000, 1.0)
+                is_known_attack = True
 
             # Long Duration Flow - Suspiciously long flow
             elif flow_duration > 1000:
                 anomaly_type = "Long Duration Flow"
                 confidence = min(flow_duration / 2000, 1.0)
+                is_known_attack = True
 
-            # Normal traffic (no rule fired): score = confidence in "normal"
+            # Select model based on whether it's a known attack
+            model_type = self.select_model(is_known_attack)
+
+            # Calculate complexity for logging purposes
+            complexity = self.calculate_complexity(flow_features)
+
+            # If it's a known attack detected by rules, use rule-based result
+            if is_known_attack:
+                result = {
+                    'label': 'anomaly',
+                    'score': float(confidence),
+                    'anomaly_type': anomaly_type,
+                    'model_type': 'rule-based',
+                    'complexity': float(complexity),
+                    'timestamp': time.time()
+                }
+                return result
+
+            # For unknown patterns, use the selected ML/DL model
             else:
-                anomaly_type = "normal"
-                confidence = 0.85
+                # Convert features to array for model prediction
+                if self.feature_names:
+                    feature_array = self.feature_extractor.features_to_array(
+                        flow_features, self.feature_names
+                    )
+                else:
+                    feature_array = self.feature_extractor.features_to_array(flow_features)
 
-            result = {
-                'label': 'anomaly' if anomaly_type != 'normal' else 'normal',
-                'score': float(confidence),
-                'anomaly_type': anomaly_type,
-                'model_type': model_type,
-                'complexity': float(complexity),
-                'timestamp': time.time()
-            }
+                # Ensure correct shape
+                if feature_array.ndim == 1:
+                    feature_array = feature_array.reshape(1, -1)
 
-            return result
+                # Apply scaling
+                if self.scaler:
+                    feature_array = self.scaler.transform(feature_array)
+
+                # Make prediction using selected model
+                if model_type == 'ml' and self.ml_predictor:
+                    prediction, confidence, anomaly_type = self._predict_ml(feature_array)
+                elif model_type == 'dl' and self.dl_predictor:
+                    prediction, confidence, anomaly_type = self._predict_dl(feature_array)
+                else:
+                    # Fallback to rule-based if models not available
+                    anomaly_type = "normal"
+                    confidence = 0.85
+
+                result = {
+                    'label': 'anomaly' if anomaly_type != 'normal' else 'normal',
+                    'score': float(confidence),
+                    'anomaly_type': anomaly_type,
+                    'model_type': model_type,
+                    'complexity': float(complexity),
+                    'timestamp': time.time()
+                }
+
+                return result
 
         except Exception as e:
             logger.error(f"Prediction error: {e}")
