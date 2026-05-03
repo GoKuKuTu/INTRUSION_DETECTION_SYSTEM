@@ -1,5 +1,1 @@
-<<<<<<< HEAD
-"# Final-year-project" 
-=======
-# INTRUSION_DETECTION_SYSTEM
->>>>>>> 3bfa264199d7baca164bd46e4bedc4b02b4b6e69
+This project implements a real-time Intrusion Detection System using a hybrid Machine Learning and Deep Learning approach. It dynamically selects the appropriate model based on network traffic complexity to optimize performance and accuracy.
